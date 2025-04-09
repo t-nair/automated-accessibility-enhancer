@@ -90,11 +90,11 @@ def accessibility_processor(directory):
 
 
 
-# Change directory path as needed
+# Change directory_path and new_directory to match local folders
 
-directory_path = "C:\\Users\\Tanya\\Desktop\\UW_Internship_Script_Demo\\To Process"
+directory_path = None
 
-new_directory = "C:\\Users\\Tanya\\Desktop\\UW_Internship_Script_Demo\\Processed"
+new_directory = None
 
 
 accessibility_processor(directory_path)
