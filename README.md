@@ -4,6 +4,7 @@ Python script that processes .pptx files to enhance their accessibility by autom
 
 Made for the University of WA: Advancing Accessibility for Engineering Education project under the guidance of Prof. Anant and Dr. Subramanian.
 
+Any feedback on the design would be greatly appreciated—[you can send me a message via LinkedIn.](https://www.linkedin.com/in/tanya-nair-617473287/)
 ## Workflow
 
 ## Possible Improvements
