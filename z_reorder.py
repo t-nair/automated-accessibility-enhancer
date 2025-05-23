@@ -7,6 +7,7 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from alternat.generation import Generator
 
 
+# alt text generation is not very good at the moment...
 
 def accessibility_processor(directory):
 
