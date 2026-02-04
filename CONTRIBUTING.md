@@ -31,7 +31,7 @@ git clone https://github.com/<your-username>/automated-accessibility-enhancer.gi
 cd automated-accessibility-enhancer
 python -m venv .venv
 source .venv/bin/activate
-pip install python-pptx
+pip install requirements.txt
 ```
 
 ---
