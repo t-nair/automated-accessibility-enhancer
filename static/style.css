@@ -1,0 +1,320 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    color: #222;
+    background-color: #ffffff;
+}
+
+header {
+    background-color: #1c3d5a;
+    color: white;
+    padding: 15px 20px;
+}
+
+header h1 {
+    margin: 0 0 10px 0;
+    font-size: 1.5em;
+}
+
+nav ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    gap: 20px;
+}
+
+nav a {
+    color: white;
+    text-decoration: underline;
+}
+
+nav a:focus {
+    outline: 3px solid #ffbf47;
+    outline-offset: 2px;
+}
+
+main {
+    max-width: 700px;
+    margin: 20px auto;
+    padding: 0 20px;
+}
+
+footer {
+    text-align: center;
+    padding: 15px;
+    font-size: 0.9em;
+    color: #555;
+}
+
+.skip-link {
+    position: absolute;
+    left: -1000px;
+    top: 0;
+    background: #1c3d5a;
+    color: white;
+    padding: 10px;
+}
+
+.skip-link:focus {
+    left: 10px;
+}
+
+label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.help-text {
+    font-size: 0.9em;
+    color: #555;
+    margin-top: 5px;
+}
+
+input[type="file"] {
+    margin-bottom: 5px;
+}
+
+button {
+    background-color: #1c3d5a;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    font-size: 1em;
+    cursor: pointer;
+    margin-top: 15px;
+}
+
+button:hover {
+    background-color: #14293d;
+}
+
+button:focus {
+    outline: 3px solid #ffbf47;
+    outline-offset: 2px;
+}
+
+.drop-zone {
+    display: block;
+    border: 2px dashed #7d97ad;
+    background-color: #f7f9fb;
+    padding: 40px 20px;
+    margin-top: 15px;
+    text-align: center;
+    cursor: pointer;
+    font-weight: normal;
+}
+
+.drop-zone:hover {
+    background-color: #eef3f8;
+    border-color: #1c3d5a;
+}
+
+/* the file input inside is visually hidden, so show the focus ring on the whole box */
+.drop-zone:focus-within {
+    outline: 3px solid #ffbf47;
+    outline-offset: 2px;
+}
+
+.drop-zone-active {
+    background-color: #e3edf5;
+    border-color: #1c3d5a;
+    border-style: solid;
+}
+
+.drop-zone-icon {
+    display: block;
+    width: 48px;
+    height: 48px;
+    margin: 0 auto 10px auto;
+    fill: #7d97ad;
+}
+
+.drop-zone-title {
+    display: block;
+    font-size: 1.3em;
+    font-weight: bold;
+    color: #1c3d5a;
+}
+
+.drop-zone-hint {
+    display: block;
+    margin-top: 5px;
+    color: #555;
+}
+
+.chosen-file {
+    margin-top: 10px;
+    color: #555;
+}
+
+.chosen-file-selected {
+    color: #3c763d;
+    font-weight: bold;
+}
+
+.flash-message {
+    background-color: #fff3cd;
+    border: 1px solid #d9a441;
+    padding: 10px 15px;
+    margin-bottom: 20px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+}
+
+th, td {
+    text-align: left;
+    padding: 10px;
+    border-bottom: 1px solid #ccc;
+}
+
+.status-badge {
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+.status-received {
+    background-color: #d9edf7;
+    color: #31708f;
+}
+
+.status-error {
+    background-color: #f2dede;
+    color: #a94442;
+}
+
+.status-processing {
+    background-color: #fff3cd;
+    color: #7a5b00;
+}
+
+.status-queued {
+    background-color: #e8eaed;
+    color: #444;
+}
+
+.status-done {
+    background-color: #dff0d8;
+    color: #3c763d;
+}
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+}
+
+.progress-box {
+    background-color: #f7f9fb;
+    border: 1px solid #7d97ad;
+    padding: 15px 20px;
+    margin: 15px 0;
+}
+
+.progress-box h3 {
+    margin-top: 0;
+}
+
+.progress-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 10px;
+}
+
+progress {
+    flex: 1;
+    height: 22px;
+    /* modern browsers colour the bar with accent-color instead of the older rules below */
+    accent-color: #1c3d5a;
+}
+
+progress::-webkit-progress-bar {
+    background-color: #e3e9ef;
+}
+
+progress::-webkit-progress-value {
+    background-color: #1c3d5a;
+}
+
+progress::-moz-progress-bar {
+    background-color: #1c3d5a;
+}
+
+.delete-form {
+    margin-top: 20px;
+}
+
+.delete-button {
+    background-color: #8c2f2b;
+    padding: 8px 15px;
+    margin-top: 0;
+    font-size: 0.95em;
+}
+
+.delete-button:hover {
+    background-color: #6d2422;
+}
+
+/* inside the submissions table the button should sit tight in its cell */
+td .delete-form {
+    margin-top: 0;
+}
+
+.progress-percent {
+    min-width: 45px;
+    text-align: right;
+    font-weight: bold;
+    color: #1c3d5a;
+}
+
+.error-box {
+    background-color: #f2dede;
+    border: 1px solid #a94442;
+    color: #a94442;
+    padding: 10px 15px;
+    margin: 15px 0;
+}
+
+.error-box ol {
+    margin: 5px 0 15px 0;
+    padding-left: 20px;
+}
+
+.error-box li {
+    margin-bottom: 5px;
+}
+
+.download-link {
+    display: inline-block;
+    background-color: #1c3d5a;
+    color: white;
+    text-decoration: none;
+    padding: 10px 20px;
+    margin-top: 5px;
+}
+
+.download-link:hover {
+    background-color: #14293d;
+}
+
+.download-link:focus {
+    outline: 3px solid #ffbf47;
+    outline-offset: 2px;
+}
+
+.report-text {
+    white-space: pre-wrap;
+    background-color: #f7f7f7;
+    border: 1px solid #ccc;
+    padding: 10px;
+}
