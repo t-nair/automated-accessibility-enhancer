@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Submission Details</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+    <header>
+        <h1>Accessibility Enhancer</h1>
+        <nav>
+            <ul>
+                <li><a href="{{ url_for('home') }}">Submit a File</a></li>
+                <li><a href="{{ url_for('status') }}">Check Status</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main id="main-content">
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash-message" role="alert" aria-live="assertive">
+                    {% for message in messages %}
+                        <p>{{ message }}</p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <h2>{{ submission.original_filename }}</h2>
+
+        <p>
+            Submitted: {{ submission.submitted_at }}<br>
+            Status:
+            <span class="status-badge status-{{ submission.status }}">
+                {{ submission.status }}
+            </span>
+        </p>
+
+        {% if submission.status == "processing" or submission.status == "queued" %}
+            <div class="progress-box">
+                <h3>Making your file accessible</h3>
+                <p>You can leave this page open. It updates on its own and will show your download when it's ready.</p>
+
+                <div class="progress-row">
+                    <progress id="progress-bar" max="100" value="0" data-submission-id="{{ submission.id }}" aria-label="Processing progress"></progress>
+                    <span class="progress-percent" id="progress-percent" aria-live="polite">0%</span>
+                </div>
+            </div>
+        {% endif %}
+
+        {% if submission.status == "error" %}
+            <div class="error-box" role="alert">
+                <h3>We couldn’t process this presentation</h3>
+                <p>
+                    {% if submission.error_message %}
+                        {{ submission.error_message }}
+                    {% else %}
+                        Something went wrong while processing this file. Please try submitting it again.
+                    {% endif %}
+                </p>
+
+                {% if submission.error_steps %}
+                    <p><strong>Try this:</strong></p>
+                    <ol>
+                        {% for step in submission.error_steps %}
+                            <li>{{ step }}</li>
+                        {% endfor %}
+                    </ol>
+                {% endif %}
+
+                <p>You can safely try again below. We keep the original upload for this purpose.</p>
+                <form action="{{ url_for('retry_submission', submission_id=submission.id) }}" method="POST">
+                    <button type="submit">Try again</button>
+                </form>
+            </div>
+        {% endif %}
+
+        {% if submission.status == "done" %}
+            <p>
+                <a href="{{ url_for('download', submission_id=submission.id) }}" class="download-link">
+                    Download Accessible File
+                </a>
+            </p>
+
+            <h3>Accessibility Report</h3>
+            <p>This report lists each shape on your slides and its alt text, so you can see what screen readers will announce.</p>
+            <pre class="report-text">{{ report_text }}</pre>
+        {% endif %}
+
+        {% if submission.status != "queued" and submission.status != "processing" %}
+            <form action="{{ url_for('delete', submission_id=submission.id) }}" method="POST" class="delete-form">
+                <button type="submit" class="delete-button">
+                    Delete this submission
+                </button>
+            </form>
+        {% endif %}
+
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

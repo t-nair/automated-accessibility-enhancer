@@ -1,4 +1,6 @@
+Flask
 python-pptx
 Pillow
 torch
 transformers
+pytest

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Submit a Presentation</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+    <header>
+        <h1>Accessibility Enhancer</h1>
+        <nav>
+            <ul>
+                <li><a href="{{ url_for('home') }}">Submit a File</a></li>
+                <li><a href="{{ url_for('status') }}">Check Status</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main id="main-content">
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash-message" role="alert" aria-live="assertive">
+                    {% for message in messages %}
+                        <p>{{ message }}</p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <h2>Submit PowerPoint Files</h2>
+        <p>Upload one or more .pptx or .ppt files below. We'll fix the slide reading order so screen readers announce titles first, write descriptions for images that are missing them, and give you a report of what we found.</p>
+
+        <form action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data" id="upload-form">
+
+            <label class="drop-zone" id="drop-zone">
+                <svg class="drop-zone-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M12 4l-5 5h3v6h4V9h3l-5-5z"></path>
+                    <path d="M5 18h14v2H5z"></path>
+                </svg>
+
+                <span class="drop-zone-title">Drag and drop or click here</span>
+                <span class="drop-zone-hint">to upload your PowerPoint files (.pptx or .ppt, max {{ max_file_size_mb }} MB each)</span>
+
+                <input
+                    type="file"
+                    id="presentation"
+                    name="presentation"
+                    accept=".pptx,.ppt"
+                    multiple
+                    required
+                    class="visually-hidden"
+                >
+            </label>
+
+            <p class="chosen-file" id="chosen-file" aria-live="polite">No files chosen yet.</p>
+
+            <button type="submit">Submit Files</button>
+
+        </form>
+
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

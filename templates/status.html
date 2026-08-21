@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Submission Status</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+    <header>
+        <h1>Accessibility Enhancer</h1>
+        <nav>
+            <ul>
+                <li><a href="{{ url_for('home') }}">Submit a File</a></li>
+                <li><a href="{{ url_for('status') }}">Check Status</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main id="main-content">
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash-message" role="alert" aria-live="assertive">
+                    {% for message in messages %}
+                        <p>{{ message }}</p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <h2>Your Submissions</h2>
+
+        {% if submissions|length == 0 %}
+            <p>You have not submitted any files yet.</p>
+        {% else %}
+            <table id="submissions-table">
+                <caption class="visually-hidden">List of submitted files and their processing status</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">File Name</th>
+                        <th scope="col">Submitted</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Details</th>
+                        <th scope="col">Delete</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for submission in submissions %}
+                        <tr>
+                            <td>{{ submission.original_filename }}</td>
+                            <td>{{ submission.submitted_at }}</td>
+                            <td>
+                                <span class="status-badge status-{{ submission.status }}">
+                                    {{ submission.status }}
+                                </span>
+                            </td>
+                            <td>
+                                <a href="{{ url_for('details', submission_id=submission.id) }}">
+                                    View details
+                                    <span class="visually-hidden"> for {{ submission.original_filename }}</span>
+                                </a>
+                            </td>
+                            <td>
+                                {% if submission.status != "queued" and submission.status != "processing" %}
+                                    <form action="{{ url_for('delete', submission_id=submission.id) }}" method="POST" class="delete-form">
+                                        <button type="submit" class="delete-button">
+                                            Delete
+                                            <span class="visually-hidden"> {{ submission.original_filename }}</span>
+                                        </button>
+                                    </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% endif %}
+
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
