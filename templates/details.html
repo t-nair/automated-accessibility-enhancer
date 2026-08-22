@@ -31,7 +31,18 @@
             {% endif %}
         {% endwith %}
 
-        <h2>{{ submission.original_filename }}</h2>
+        <div class="details-header">
+            <h2>{{ submission.original_filename }}</h2>
+
+            {% if submission.status != "queued" and submission.status != "processing" %}
+                <form action="{{ url_for('delete', submission_id=submission.id) }}" method="POST" class="delete-form">
+                    <button type="submit" class="delete-button">
+                        Delete
+                        <span class="visually-hidden"> {{ submission.original_filename }}</span>
+                    </button>
+                </form>
+            {% endif %}
+        </div>
 
         <p>
             Submitted: {{ submission.submitted_at }}<br>
@@ -88,16 +99,50 @@
             </p>
 
             <h3>Accessibility Report</h3>
-            <p>This report lists each shape on your slides and its alt text, so you can see what screen readers will announce.</p>
-            <pre class="report-text">{{ report_text }}</pre>
-        {% endif %}
 
-        {% if submission.status != "queued" and submission.status != "processing" %}
-            <form action="{{ url_for('delete', submission_id=submission.id) }}" method="POST" class="delete-form">
-                <button type="submit" class="delete-button">
-                    Delete this submission
-                </button>
-            </form>
+            {% if slides %}
+                <p>This is what a screen reader will announce on each slide. Please check the descriptions we wrote before sharing the file.</p>
+
+                <ul class="report-totals">
+                    <li><strong>{{ totals.slides }}</strong> slides, <strong>{{ totals.shapes }}</strong> shapes</li>
+                    <li><strong>{{ totals.described }}</strong> images we described</li>
+                    <li><strong>{{ totals.already_had }}</strong> images that already had a description</li>
+                    <li><strong>{{ totals.no_description }}</strong> shapes with nothing to announce</li>
+                </ul>
+
+                {% for slide in slides %}
+                    <details class="slide-block">
+                        <summary>
+                            Slide {{ slide.number }}
+                            <span class="slide-note">
+                                {{ slide.shapes|length }} shapes{% if slide.added %}, {{ slide.added }} described by us{% endif %}
+                            </span>
+                        </summary>
+
+                        <ul class="shape-list">
+                            {% for shape in slide.shapes %}
+                                <li class="shape-item">
+                                    <span class="shape-kind shape-kind-{{ shape.kind }}">{{ shape.kind }}</span>
+                                    <span class="shape-body">
+                                        <span class="shape-name">{{ shape.name }}</span>
+                                        {% if shape.description %}
+                                            <span class="shape-text">{{ shape.description }}</span>
+                                        {% else %}
+                                            <span class="shape-text shape-text-empty">Nothing for a screen reader to announce.</span>
+                                        {% endif %}
+                                        {% if shape.we_added_it %}
+                                            <span class="shape-added">We wrote this description</span>
+                                        {% endif %}
+                                    </span>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    </details>
+                {% endfor %}
+            {% else %}
+                <p>This report lists each shape on your slides and its alt text, so you can see what screen readers will announce.</p>
+                <pre class="report-text">{{ report_text }}</pre>
+            {% endif %}
         {% endif %}
 
     </main>

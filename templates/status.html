@@ -44,7 +44,6 @@
                         <th scope="col">Submitted</th>
                         <th scope="col">Status</th>
                         <th scope="col">Details</th>
-                        <th scope="col">Delete</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -62,16 +61,6 @@
                                     View details
                                     <span class="visually-hidden"> for {{ submission.original_filename }}</span>
                                 </a>
-                            </td>
-                            <td>
-                                {% if submission.status != "queued" and submission.status != "processing" %}
-                                    <form action="{{ url_for('delete', submission_id=submission.id) }}" method="POST" class="delete-form">
-                                        <button type="submit" class="delete-button">
-                                            Delete
-                                            <span class="visually-hidden"> {{ submission.original_filename }}</span>
-                                        </button>
-                                    </form>
-                                {% endif %}
                             </td>
                         </tr>
                     {% endfor %}

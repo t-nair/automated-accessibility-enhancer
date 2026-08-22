@@ -1,29 +1,109 @@
 const uploadForm = document.getElementById("upload-form");
 const dropZone = document.getElementById("drop-zone");
 const fileInput = document.getElementById("presentation");
-const chosenFile = document.getElementById("chosen-file");
+const chosenCount = document.getElementById("chosen-count");
+const fileList = document.getElementById("file-list");
 
 
-function showChosenFile() {
+function formatSize(bytes) {
+    const kilobytes = bytes / 1024;
+
+    if (kilobytes < 1024) {
+        return Math.round(kilobytes) + " KB";
+    }
+
+    const megabytes = kilobytes / 1024;
+
+    return megabytes.toFixed(1) + " MB";
+}
+
+
+function getFileLabel(filename) {
+    if (filename.toLowerCase().endsWith(".ppt")) {
+        return "PPT";
+    }
+
+    return "PPTX";
+}
+
+
+// take the chosen file out of the list, which means rebuilding it because
+// the browser does not let us change the list directly
+function removeChosenFile(indexToRemove) {
+    const kept = new DataTransfer();
+
+    for (let i = 0; i < fileInput.files.length; i++) {
+        if (i !== indexToRemove) {
+            kept.items.add(fileInput.files[i]);
+        }
+    }
+
+    fileInput.files = kept.files;
+    showChosenFiles();
+}
+
+
+function makeFileRow(file, index) {
+    const row = document.createElement("li");
+    row.className = "file-row";
+
+    const icon = document.createElement("span");
+    icon.className = "file-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = getFileLabel(file.name);
+
+    const details = document.createElement("span");
+    details.className = "file-details";
+
+    const name = document.createElement("span");
+    name.className = "file-name";
+    name.textContent = file.name;
+
+    const size = document.createElement("span");
+    size.className = "file-size";
+    size.textContent = formatSize(file.size);
+
+    details.appendChild(name);
+    details.appendChild(size);
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "file-remove";
+    removeButton.textContent = "×";
+    removeButton.setAttribute("aria-label", "Remove " + file.name);
+
+    removeButton.addEventListener("click", function () {
+        removeChosenFile(index);
+    });
+
+    row.appendChild(icon);
+    row.appendChild(details);
+    row.appendChild(removeButton);
+
+    return row;
+}
+
+
+function showChosenFiles() {
+    fileList.textContent = "";
+
     if (fileInput.files.length === 0) {
-        chosenFile.textContent = "No files chosen yet.";
-        chosenFile.classList.remove("chosen-file-selected");
+        chosenCount.textContent = "No files chosen yet.";
+        chosenCount.classList.remove("chosen-count-selected");
         return;
     }
 
-    const names = [];
+    if (fileInput.files.length === 1) {
+        chosenCount.textContent = "1 file chosen";
+    } else {
+        chosenCount.textContent = fileInput.files.length + " files chosen";
+    }
+
+    chosenCount.classList.add("chosen-count-selected");
 
     for (let i = 0; i < fileInput.files.length; i++) {
-        names.push(fileInput.files[i].name);
+        fileList.appendChild(makeFileRow(fileInput.files[i], i));
     }
-
-    if (names.length === 1) {
-        chosenFile.textContent = "Chosen file: " + names[0];
-    } else {
-        chosenFile.textContent = "Chosen " + names.length + " files: " + names.join(", ");
-    }
-
-    chosenFile.classList.add("chosen-file-selected");
 }
 
 
@@ -44,11 +124,11 @@ if (dropZone) {
 
         if (event.dataTransfer.files.length > 0) {
             fileInput.files = event.dataTransfer.files;
-            showChosenFile();
+            showChosenFiles();
         }
     });
 
-    fileInput.addEventListener("change", showChosenFile);
+    fileInput.addEventListener("change", showChosenFiles);
 }
 
 

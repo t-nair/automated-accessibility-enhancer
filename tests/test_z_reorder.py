@@ -114,6 +114,47 @@ def test_get_slide_text_is_empty_for_a_slide_with_no_text():
     assert z_reorder.get_slide_text(slide) == ""
 
 
+JUNK_ALT_TEXTS = [
+    "Image Google Shape;1447;p111",
+    "Three Right Hand Rules of ...",
+    "Motor Speed ...",
+    "Erno Gero | Turtledove | Fandom",
+    "International Baccalaureate - Wikipedia",
+    "How Electric Motors Work | HowStuffWorks",
+    "https://example.com/diagram",
+    "diagram.png",
+    "",
+    "   ",
+]
+
+REAL_ALT_TEXTS = [
+    "A blue square used as a placeholder image",
+    "A constant current I flows in the long straight wire in the direction shown.",
+    "a woman sitting at a desk with a computer",
+    "Two silhouettes of human heads, one pink and one blue",
+    "A bronze bust of a man on a pedestal",
+]
+
+
+@pytest.mark.parametrize("alt_text", JUNK_ALT_TEXTS)
+def test_unhelpful_alt_text_is_spotted(alt_text):
+    assert z_reorder.looks_like_junk_alt_text(alt_text, "Picture 2") is True
+
+
+@pytest.mark.parametrize("alt_text", REAL_ALT_TEXTS)
+def test_real_alt_text_is_left_alone(alt_text):
+    assert z_reorder.looks_like_junk_alt_text(alt_text, "Picture 2") is False
+
+
+def test_our_own_placeholder_counts_as_unhelpful():
+    assert z_reorder.looks_like_junk_alt_text("Image Picture 4", "Picture 4") is True
+
+
+def test_a_description_that_mentions_a_picture_is_kept():
+    # this should not be mistaken for the placeholder above, because the shape differs
+    assert z_reorder.looks_like_junk_alt_text("Image Picture 4", "Picture 9") is False
+
+
 def get_first_picture(path):
     prs = Presentation(path)
 

@@ -1,6 +1,8 @@
 import io
 import os
 import sys
+import json
+from datetime import datetime
 
 import pytest
 
@@ -276,6 +278,40 @@ def test_details_page_shows_the_error_and_the_steps(client):
     assert b"Check the file on your computer." in response.data
 
 
+def test_read_report_groups_the_shapes_by_slide(client):
+    report = json.dumps({"file": "x.pptx", "shapes": [
+        {"slide": 1, "name": "Title 1", "kind": "text", "description": "Hello", "we_added_it": False},
+        {"slide": 1, "name": "Picture 2", "kind": "image", "description": "A logo", "we_added_it": True},
+        {"slide": 2, "name": "Picture 3", "kind": "image", "description": "A photo", "we_added_it": False},
+    ]})
+
+    slides, totals = app_module.read_report(report)
+
+    assert len(slides) == 2
+    assert slides[0]["number"] == 1
+    assert len(slides[0]["shapes"]) == 2
+    assert totals["slides"] == 2
+    assert totals["described"] == 1
+    assert totals["already_had"] == 1
+
+
+def test_read_report_counts_shapes_with_nothing_to_announce(client):
+    report = json.dumps({"file": "x.pptx", "shapes": [
+        {"slide": 1, "name": "Group 4", "kind": "other", "description": None, "we_added_it": False},
+    ]})
+
+    slides, totals = app_module.read_report(report)
+
+    assert totals["no_description"] == 1
+
+
+def test_read_report_ignores_an_older_plain_text_report(client):
+    slides, totals = app_module.read_report(" \n Shape: Title 1 \n - Alt Text: Hello \n")
+
+    assert slides == []
+    assert totals == {}
+
+
 def test_details_page_shows_a_progress_bar_while_queued(client):
     add_submission("wait0001", status="queued")
 
@@ -446,20 +482,80 @@ def test_a_failed_submission_can_be_deleted(client):
     assert app_module.get_submission("bad00001") is None
 
 
-def test_the_status_page_offers_a_delete_button(client):
+def test_the_details_page_offers_a_delete_button(client):
     add_submission("show0001")
 
-    response = client.get("/status")
+    response = client.get("/details/show0001")
 
     assert b"/delete/show0001" in response.data
 
 
-def test_the_status_page_hides_delete_while_a_file_is_queued(client):
+def test_the_details_page_hides_delete_while_a_file_is_queued(client):
     add_submission("hide0001", status="queued")
+
+    response = client.get("/details/hide0001")
+
+    assert b"/delete/hide0001" not in response.data
+
+
+def test_the_status_page_has_no_delete_button(client):
+    add_submission("list0001")
 
     response = client.get("/status")
 
-    assert b"/delete/hide0001" not in response.data
+    assert b"/delete/list0001" not in response.data
+
+
+def test_files_left_mid_processing_are_marked_as_failed(client):
+    add_submission("stuck001", status="processing")
+    add_submission("stuck002", status="queued")
+    add_submission("fine0002", status="done")
+
+    app_module.recover_stuck_submissions()
+
+    assert app_module.get_submission("stuck001")["status"] == "error"
+    assert app_module.get_submission("stuck002")["status"] == "error"
+    assert app_module.get_submission("fine0002")["status"] == "done"
+
+
+def test_a_recovered_file_explains_what_happened(client):
+    add_submission("stuck003", status="processing")
+
+    app_module.recover_stuck_submissions()
+    submission = app_module.get_submission("stuck003")
+
+    assert "restarted" in submission["error_message"]
+    assert len(submission["error_steps"]) > 0
+
+
+def test_old_submissions_are_deleted(client):
+    add_submission("old00001", submitted_at="2020-01-01 09:00")
+    add_submission("new00001", submitted_at=datetime.now().strftime("%Y-%m-%d %H:%M"))
+
+    app_module.delete_old_submissions()
+
+    assert app_module.get_submission("old00001") is None
+    assert app_module.get_submission("new00001") is not None
+
+
+def test_deleting_an_old_submission_removes_its_files(client):
+    add_submission("old00002", submitted_at="2020-01-01 09:00")
+    upload_path = os.path.join(app_module.UPLOAD_FOLDER, "old00002_Lecture.pptx")
+    copy_into("control_no_issues.pptx", upload_path)
+
+    app_module.delete_old_submissions()
+
+    assert not os.path.exists(upload_path)
+
+
+def test_an_upload_bigger_than_the_request_limit_is_refused(client, monkeypatch):
+    monkeypatch.setitem(app_module.app.config, "MAX_CONTENT_LENGTH", 2048)
+
+    big = io.BytesIO(b"x" * 8000)
+    response = client.post("/upload", data={"presentation": (big, "big.pptx")}, follow_redirects=True)
+
+    assert b"too large" in response.data
+    assert len(client.queued) == 0
 
 
 def test_a_new_visitor_gets_their_own_id(tmp_path, monkeypatch):

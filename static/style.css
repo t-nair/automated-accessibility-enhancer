@@ -145,14 +145,71 @@ button:focus {
     color: #555;
 }
 
-.chosen-file {
-    margin-top: 10px;
+.chosen-count {
+    margin-top: 15px;
     color: #555;
 }
 
-.chosen-file-selected {
-    color: #3c763d;
+.chosen-count-selected {
+    color: #1c3d5a;
     font-weight: bold;
+}
+
+.file-list {
+    list-style: none;
+    padding: 0;
+    margin: 10px 0 0 0;
+}
+
+.file-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border: 1px solid #ccc;
+    background-color: #ffffff;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+}
+
+.file-icon {
+    background-color: #1c3d5a;
+    color: white;
+    font-size: 0.7em;
+    font-weight: bold;
+    letter-spacing: 1px;
+    padding: 8px 6px;
+    min-width: 44px;
+    text-align: center;
+}
+
+.file-details {
+    flex: 1;
+    min-width: 0;
+}
+
+.file-name {
+    display: block;
+    color: #222;
+    word-break: break-word;
+}
+
+.file-size {
+    display: block;
+    font-size: 0.85em;
+    color: #555;
+}
+
+.file-remove {
+    background-color: transparent;
+    color: #8c2f2b;
+    font-size: 1.5em;
+    line-height: 1;
+    padding: 2px 10px;
+    margin-top: 0;
+}
+
+.file-remove:hover {
+    background-color: #f2dede;
 }
 
 .flash-message {
@@ -250,8 +307,16 @@ progress::-moz-progress-bar {
     background-color: #1c3d5a;
 }
 
-.delete-form {
-    margin-top: 20px;
+/* the file name sits on the left and the delete button on the right */
+.details-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+}
+
+.details-header h2 {
+    margin: 0;
 }
 
 .delete-button {
@@ -259,15 +324,11 @@ progress::-moz-progress-bar {
     padding: 8px 15px;
     margin-top: 0;
     font-size: 0.95em;
+    white-space: nowrap;
 }
 
 .delete-button:hover {
     background-color: #6d2422;
-}
-
-/* inside the submissions table the button should sit tight in its cell */
-td .delete-form {
-    margin-top: 0;
 }
 
 .progress-percent {
@@ -310,6 +371,100 @@ td .delete-form {
 .download-link:focus {
     outline: 3px solid #ffbf47;
     outline-offset: 2px;
+}
+
+.report-totals {
+    list-style: none;
+    padding: 12px 15px;
+    margin: 15px 0;
+    background-color: #f7f9fb;
+    border: 1px solid #7d97ad;
+}
+
+.report-totals li {
+    margin-bottom: 4px;
+}
+
+.slide-block {
+    border: 1px solid #ccc;
+    margin-bottom: 8px;
+}
+
+.slide-block summary {
+    padding: 10px 12px;
+    background-color: #f7f9fb;
+    font-weight: bold;
+    color: #1c3d5a;
+    cursor: pointer;
+}
+
+.slide-block summary:focus {
+    outline: 3px solid #ffbf47;
+    outline-offset: -3px;
+}
+
+.slide-note {
+    font-weight: normal;
+    color: #555;
+}
+
+.shape-list {
+    list-style: none;
+    padding: 10px 12px;
+    margin: 0;
+}
+
+.shape-item {
+    display: flex;
+    gap: 10px;
+    padding: 8px 0;
+    border-top: 1px solid #eee;
+}
+
+.shape-kind {
+    font-size: 0.7em;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 3px 6px;
+    min-width: 52px;
+    text-align: center;
+    height: fit-content;
+    background-color: #e8eaed;
+    color: #444;
+}
+
+.shape-kind-image {
+    background-color: #1c3d5a;
+    color: white;
+}
+
+.shape-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.shape-name {
+    display: block;
+    font-size: 0.85em;
+    color: #555;
+}
+
+.shape-text {
+    display: block;
+    color: #222;
+    word-break: break-word;
+}
+
+.shape-text-empty {
+    color: #777;
+    font-style: italic;
+}
+
+.shape-added {
+    display: inline-block;
+    margin-top: 4px;
+    font-size: 0.8em;
+    color: #3c763d;
 }
 
 .report-text {

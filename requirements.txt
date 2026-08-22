@@ -3,4 +3,5 @@ python-pptx
 Pillow
 torch
 transformers
+waitress
 pytest

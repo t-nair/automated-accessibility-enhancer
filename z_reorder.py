@@ -1,5 +1,6 @@
 import os
 import io
+import json
 import time
 import shutil
 import logging
@@ -368,8 +369,10 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
     alt_text_output_file = os.path.join(new_directory, os.path.splitext(filename)[0] + "_alt_text")
 
     try:
+        records = fix_titles_and_describe_shapes(prs, filename, progress_callback)
+
         with open(alt_text_output_file, "w", encoding="utf-8") as f:
-            fix_titles_and_log_alt_text(prs, f, filename, progress_callback)
+            json.dump({"file": filename, "shapes": records}, f, indent=2)
     except Exception as e:
         logging.error(f"Something went wrong processing shapes in {filename}. Error: {e}")
         return False, "We opened your file, but something went wrong while checking your slides for accessibility issues.", [
@@ -411,15 +414,17 @@ def count_images_needing_captions(prs):
 
     for slide in prs.slides:
         for shape in slide.shapes:
-            if shape.shape_type == 13 and not get_picture_alt_text(shape):
+            if shape.shape_type == 13 and needs_a_description(shape):
                 total += 1
 
     return total
 
 
-def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
+# fixes the reading order and returns one record per shape, which becomes the report
+def fix_titles_and_describe_shapes(prs, filename, progress_callback=None):
     total_to_caption = count_images_needing_captions(prs)
     captions_done = 0
+    records = []
 
     if progress_callback is not None:
         progress_callback(captions_done, total_to_caption)
@@ -439,13 +444,58 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
             needed_caption = shape.shape_type == 13 and not get_picture_alt_text(shape)
 
-            write_alt_text_line(shape, f, slide_text)
+            records.append(describe_shape(shape, slide_number, slide_text))
 
             if needed_caption:
                 captions_done += 1
 
                 if progress_callback is not None:
                     progress_callback(captions_done, total_to_caption)
+
+    return records
+
+
+# PowerPoint and Google Slides often fill alt text in by themselves, usually with the
+# title of the web page the picture was copied from. That tells a screen reader user
+# nothing about the picture, so we treat it as missing and write a real description.
+SITE_NAMES_IN_TITLES = ("wikipedia", "fandom", "howstuffworks", "magnum photos", "medium")
+IMAGE_FILE_ENDINGS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+
+
+def looks_like_junk_alt_text(alt_text, shape_name):
+    if not alt_text or not alt_text.strip():
+        return True
+
+    text = alt_text.strip()
+    lowered = text.lower()
+
+    # Google Slides exports leave their own shape ids behind
+    if lowered.startswith("image google shape"):
+        return True
+
+    # a placeholder this tool wrote itself when a description could not be made
+    if text == "Image " + shape_name:
+        return True
+
+    if lowered.startswith("http://") or lowered.startswith("https://"):
+        return True
+
+    if lowered.endswith(IMAGE_FILE_ENDINGS):
+        return True
+
+    # search result titles get cut short
+    if text.endswith("...") or text.endswith("…"):
+        return True
+
+    # page titles usually carry the site name after a bar
+    if " | " in text:
+        return True
+
+    for site in SITE_NAMES_IN_TITLES:
+        if site in lowered:
+            return True
+
+    return False
 
 
 def get_picture_alt_text(shape):
@@ -458,26 +508,60 @@ def set_picture_alt_text(shape, alt_text):
     shape._element.nvPicPr.cNvPr.set("descr", alt_text)
 
 
-def write_alt_text_line(shape, f, slide_text=""):
+def needs_a_description(shape):
+    return looks_like_junk_alt_text(get_picture_alt_text(shape), shape.name)
+
+
+# builds one line of the report, and writes a description into the file if the
+# picture did not already have one
+def describe_shape(shape, slide_number, slide_text=""):
     if shape.shape_type == 13:  # 13 is the shape type for pictures
         existing_alt_text = get_picture_alt_text(shape)
 
-        if existing_alt_text:
-            f.write(f" \n Shape: {shape.name} \n - Alt Text: {existing_alt_text} \n")
-        else:
-            try:
-                alt_text = generate_image_caption(shape, slide_text)
-            except Exception as e:
-                logging.warning(f"Could not generate a caption for {shape.name}. Falling back to a placeholder. Error: {e}")
-                alt_text = f"Image {shape.name}"
+        if not looks_like_junk_alt_text(existing_alt_text, shape.name):
+            return {
+                "slide": slide_number,
+                "name": shape.name,
+                "kind": "image",
+                "description": existing_alt_text,
+                "we_added_it": False,
+            }
 
-            set_picture_alt_text(shape, alt_text)
-            f.write(f" \n Shape: {shape.name} \n - Alt Text: {alt_text} \n")
-    elif shape.has_text_frame:
-        alt_text = "Text content: " + shape.text
-        f.write(f" \n Shape: {shape.name} \n - Alt Text: {alt_text} \n")
-    else:
-        f.write(f" \n Shape: {shape.name} \n - No alt text available. \n")
+        if existing_alt_text and existing_alt_text.strip():
+            logging.info(f"Replacing unhelpful alt text on {shape.name}: {existing_alt_text[:60]!r}")
+
+        try:
+            alt_text = generate_image_caption(shape, slide_text)
+        except Exception as e:
+            logging.warning(f"Could not generate a caption for {shape.name}. Falling back to a placeholder. Error: {e}")
+            alt_text = f"Image {shape.name}"
+
+        set_picture_alt_text(shape, alt_text)
+
+        return {
+            "slide": slide_number,
+            "name": shape.name,
+            "kind": "image",
+            "description": alt_text,
+            "we_added_it": True,
+        }
+
+    if shape.has_text_frame:
+        return {
+            "slide": slide_number,
+            "name": shape.name,
+            "kind": "text",
+            "description": shape.text,
+            "we_added_it": False,
+        }
+
+    return {
+        "slide": slide_number,
+        "name": shape.name,
+        "kind": "other",
+        "description": None,
+        "we_added_it": False,
+    }
 
 
 if __name__ == "__main__":

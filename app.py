@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import uuid
 import queue
 import sqlite3
@@ -21,7 +22,17 @@ SECRET_KEY_FILE = "data/secret_key.txt"
 ALLOWED_EXTENSIONS = (".pptx", ".ppt")
 MAX_FILE_SIZE_MB = 50
 
+# several files can be sent at once, so the whole request is allowed to be larger than
+# one file. Anything past this is refused before it reaches the disk.
+MAX_REQUEST_SIZE_MB = 250
+
+# submissions and their files are thrown away after this long, so the disk does not
+# fill up on a server that is left running
+RETENTION_DAYS = 30
+SECONDS_IN_A_DAY = 24 * 60 * 60
+
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_SIZE_MB * 1024 * 1024
 
 # these folders are not stored in git, so make sure they exist on a fresh copy
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -238,8 +249,58 @@ def import_old_submissions():
     logging.info(f"Copied {len(old_submissions)} older submission(s) from {OLD_SUBMISSIONS_FILE} into the database.")
 
 
+# the queue only lives in memory, so anything left mid-flight when the server stopped
+# will never be picked up again. Better to say so than leave it stuck forever.
+def recover_stuck_submissions():
+    connection = get_connection()
+    rows = connection.execute("SELECT id FROM submissions WHERE status = 'queued' OR status = 'processing'").fetchall()
+
+    if not rows:
+        connection.close()
+        return
+
+    steps = json.dumps(["Upload the presentation again."])
+    connection.execute("""
+        UPDATE submissions
+        SET status = 'error', error_message = ?, error_steps = ?
+        WHERE status = 'queued' OR status = 'processing'
+    """, ("The server restarted while this file was being worked on, so it never finished.", steps))
+    connection.commit()
+    connection.close()
+
+    logging.warning(f"Marked {len(rows)} submission(s) as failed because the server restarted while they were in progress.")
+
+
+def delete_old_submissions():
+    cutoff = datetime.now() - timedelta(days=RETENTION_DAYS)
+    connection = get_connection()
+    connection.row_factory = sqlite3.Row
+    rows = connection.execute("SELECT * FROM submissions").fetchall()
+    connection.close()
+
+    removed = 0
+
+    for row in rows:
+        submission = row_to_submission(row)
+
+        try:
+            submitted = datetime.strptime(submission["submitted_at"], "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+
+        if submitted < cutoff:
+            delete_submission_files(submission)
+            delete_submission(submission["id"])
+            removed += 1
+
+    if removed:
+        logging.info(f"Deleted {removed} submission(s) older than {RETENTION_DAYS} days.")
+
+
 setup_database()
 import_old_submissions()
+recover_stuck_submissions()
+delete_old_submissions()
 
 
 # each browser gets a random id in a cookie, which is how one person's list of files
@@ -309,6 +370,8 @@ def process_one_submission(submission_id, saved_name):
 
 
 def worker_loop():
+    last_cleanup = time.time()
+
     while True:
         submission_id, saved_name = work_queue.get()
 
@@ -321,6 +384,15 @@ def worker_loop():
 
         work_queue.task_done()
 
+        # tidy up old files about once a day, so a server left running does not fill up
+        if time.time() - last_cleanup > SECONDS_IN_A_DAY:
+            last_cleanup = time.time()
+
+            try:
+                delete_old_submissions()
+            except Exception as e:
+                logging.error(f"Could not tidy up old submissions. Error: {e}")
+
 
 # daemon means this thread does not keep the app running when it is shut down
 worker_thread = threading.Thread(target=worker_loop, daemon=True)
@@ -329,6 +401,16 @@ worker_thread.start()
 
 def start_processing(submission_id, saved_name):
     work_queue.put((submission_id, saved_name))
+
+
+# Flask refuses an oversized upload before our own checks get a chance to run,
+# so this turns its error page into the same kind of message as everything else
+@app.errorhandler(413)
+def upload_was_too_large(error):
+    logging.warning("Upload rejected: the request was larger than the limit.")
+    flash(f"That upload was too large. Each file must be under {MAX_FILE_SIZE_MB} MB, and everything sent at once must be under {MAX_REQUEST_SIZE_MB} MB.")
+
+    return redirect(url_for("home"))
 
 
 @app.route("/")
@@ -425,6 +507,52 @@ def status():
     return render_template("status.html", submissions=submissions)
 
 
+# turns the saved report into a list of slides, so the page can show it a slide at a
+# time instead of one long wall of text. Older reports were plain text, and those
+# come back empty so the page falls back to showing them as they are.
+def read_report(report_text):
+    try:
+        report = json.loads(report_text)
+    except ValueError:
+        return [], {}
+
+    slides = []
+    slides_by_number = {}
+    described = 0
+    already_had = 0
+    no_description = 0
+
+    for shape in report.get("shapes", []):
+        number = shape["slide"]
+
+        if number not in slides_by_number:
+            slides_by_number[number] = {"number": number, "shapes": [], "images": 0, "added": 0}
+            slides.append(slides_by_number[number])
+
+        slides_by_number[number]["shapes"].append(shape)
+
+        if shape["kind"] == "image":
+            slides_by_number[number]["images"] += 1
+
+            if shape["we_added_it"]:
+                slides_by_number[number]["added"] += 1
+                described += 1
+            else:
+                already_had += 1
+        elif shape["kind"] == "other":
+            no_description += 1
+
+    totals = {
+        "slides": len(slides),
+        "shapes": len(report.get("shapes", [])),
+        "described": described,
+        "already_had": already_had,
+        "no_description": no_description,
+    }
+
+    return slides, totals
+
+
 @app.route("/details/<submission_id>")
 def details(submission_id):
     matching_submission = get_my_submission(submission_id)
@@ -435,6 +563,8 @@ def details(submission_id):
         return redirect(url_for("status"))
 
     report_text = "No report is available for this submission."
+    slides = []
+    totals = {}
 
     if matching_submission.get("alt_text_filename"):
         report_path = os.path.join(PROCESSED_FOLDER, matching_submission["alt_text_filename"])
@@ -442,10 +572,18 @@ def details(submission_id):
         if os.path.exists(report_path):
             with open(report_path, "r", encoding="utf-8") as f:
                 report_text = f.read()
+
+            slides, totals = read_report(report_text)
         else:
             logging.error(f"Details page for submission {submission_id} expected a report at {report_path}, but it's missing.")
 
-    return render_template("details.html", submission=matching_submission, report_text=report_text)
+    return render_template(
+        "details.html",
+        submission=matching_submission,
+        report_text=report_text,
+        slides=slides,
+        totals=totals
+    )
 
 
 @app.route("/progress/<submission_id>")
@@ -552,4 +690,12 @@ def download(submission_id):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(debug=True, port=port)
+
+    # debug mode opens a Python console in the browser whenever something breaks,
+    # so it has to be off any time other people can reach the site
+    debug_mode = os.environ.get("DEBUG", "true").lower() == "true"
+
+    if not debug_mode:
+        logging.info("Starting with debug mode off.")
+
+    app.run(debug=debug_mode, port=port)
