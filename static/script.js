@@ -160,6 +160,62 @@ if (submissionsTable) {
 }
 
 
+const slideViewer = document.getElementById("slide-viewer");
+
+// without JavaScript every slide is simply shown one after another, which still works.
+// With it, we show one at a time and add buttons to move between them.
+if (slideViewer) {
+    const panels = slideViewer.querySelectorAll(".slide-panel");
+    const slideNav = document.getElementById("slide-nav");
+    const counter = document.getElementById("slide-counter");
+    const previousButton = document.getElementById("slide-prev");
+    const nextButton = document.getElementById("slide-next");
+    let currentSlide = 0;
+
+    function showSlide(index) {
+        for (let i = 0; i < panels.length; i++) {
+            panels[i].hidden = (i !== index);
+        }
+
+        const panel = panels[index];
+        counter.textContent = "Slide " + panel.getAttribute("data-slide") +
+            " of " + panels.length + " - " + panel.getAttribute("data-note");
+
+        previousButton.disabled = (index === 0);
+        nextButton.disabled = (index === panels.length - 1);
+        currentSlide = index;
+    }
+
+    if (panels.length > 0) {
+        slideNav.hidden = false;
+        showSlide(0);
+
+        previousButton.addEventListener("click", function () {
+            if (currentSlide > 0) {
+                showSlide(currentSlide - 1);
+            }
+        });
+
+        nextButton.addEventListener("click", function () {
+            if (currentSlide < panels.length - 1) {
+                showSlide(currentSlide + 1);
+            }
+        });
+
+        // the left and right arrow keys also move between slides
+        slideViewer.addEventListener("keydown", function (event) {
+            if (event.key === "ArrowLeft" && currentSlide > 0) {
+                showSlide(currentSlide - 1);
+            }
+
+            if (event.key === "ArrowRight" && currentSlide < panels.length - 1) {
+                showSlide(currentSlide + 1);
+            }
+        });
+    }
+}
+
+
 const progressBar = document.getElementById("progress-bar");
 
 if (progressBar) {

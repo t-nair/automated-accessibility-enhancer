@@ -30,6 +30,7 @@ MAX_REQUEST_SIZE_MB = 250
 # fill up on a server that is left running
 RETENTION_DAYS = 30
 SECONDS_IN_A_DAY = 24 * 60 * 60
+SECONDS_IN_A_DAY = 24 * 60 * 60
 
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_SIZE_MB * 1024 * 1024
@@ -383,6 +384,12 @@ def worker_loop():
             set_submission_status(submission_id, "error")
 
         work_queue.task_done()
+
+        # tidy up old files roughly once a day, so a server left running for months
+        # does not slowly fill its disk
+        if time.time() - last_cleanup > SECONDS_IN_A_DAY:
+            last_cleanup = time.time()
+            delete_old_submissions()
 
         # tidy up old files about once a day, so a server left running does not fill up
         if time.time() - last_cleanup > SECONDS_IN_A_DAY:

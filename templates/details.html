@@ -110,35 +110,48 @@
                     <li><strong>{{ totals.no_description }}</strong> shapes with nothing to announce</li>
                 </ul>
 
-                {% for slide in slides %}
-                    <details class="slide-block">
-                        <summary>
-                            Slide {{ slide.number }}
-                            <span class="slide-note">
-                                {{ slide.shapes|length }} shapes{% if slide.added %}, {{ slide.added }} described by us{% endif %}
-                            </span>
-                        </summary>
+                <div class="slide-viewer" id="slide-viewer">
 
-                        <ul class="shape-list">
-                            {% for shape in slide.shapes %}
-                                <li class="shape-item">
-                                    <span class="shape-kind shape-kind-{{ shape.kind }}">{{ shape.kind }}</span>
-                                    <span class="shape-body">
-                                        <span class="shape-name">{{ shape.name }}</span>
-                                        {% if shape.description %}
-                                            <span class="shape-text">{{ shape.description }}</span>
-                                        {% else %}
-                                            <span class="shape-text shape-text-empty">Nothing for a screen reader to announce.</span>
-                                        {% endif %}
-                                        {% if shape.we_added_it %}
-                                            <span class="shape-added">We wrote this description</span>
-                                        {% endif %}
-                                    </span>
-                                </li>
-                            {% endfor %}
-                        </ul>
-                    </details>
-                {% endfor %}
+                    <div class="slide-nav" id="slide-nav" hidden>
+                        <button type="button" id="slide-prev">&larr; Previous</button>
+                        <p class="slide-counter" id="slide-counter" aria-live="polite">Slide 1</p>
+                        <button type="button" id="slide-next">Next &rarr;</button>
+                    </div>
+
+                    {% for slide in slides %}
+                        <section class="slide-panel"
+                                 data-slide="{{ slide.number }}"
+                                 data-note="{{ slide.shapes|length }} shapes{% if slide.added %}, {{ slide.added }} described by us{% endif %}">
+
+                            <h4 class="slide-heading">
+                                Slide {{ slide.number }}
+                                <span class="slide-note">
+                                    {{ slide.shapes|length }} shapes{% if slide.added %}, {{ slide.added }} described by us{% endif %}
+                                </span>
+                            </h4>
+
+                            <ul class="shape-list">
+                                {% for shape in slide.shapes %}
+                                    <li class="shape-item">
+                                        <span class="shape-kind shape-kind-{{ shape.kind }}">{{ shape.kind }}</span>
+                                        <span class="shape-body">
+                                            <span class="shape-name">{{ shape.name }}</span>
+                                            {% if shape.description %}
+                                                <span class="shape-text">{{ shape.description }}</span>
+                                            {% else %}
+                                                <span class="shape-text shape-text-empty">Nothing for a screen reader to announce.</span>
+                                            {% endif %}
+                                            {% if shape.we_added_it %}
+                                                <span class="shape-added">We wrote this description</span>
+                                            {% endif %}
+                                        </span>
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        </section>
+                    {% endfor %}
+
+                </div>
             {% else %}
                 <p>This report lists each shape on your slides and its alt text, so you can see what screen readers will announce.</p>
                 <pre class="report-text">{{ report_text }}</pre>

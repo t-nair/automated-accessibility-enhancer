@@ -385,22 +385,41 @@ progress::-moz-progress-bar {
     margin-bottom: 4px;
 }
 
-.slide-block {
+.slide-nav {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin: 15px 0 10px 0;
+}
+
+.slide-nav button {
+    margin-top: 0;
+    padding: 8px 14px;
+    font-size: 0.95em;
+}
+
+.slide-nav button:disabled {
+    background-color: #b6c2cd;
+    cursor: default;
+}
+
+.slide-counter {
+    flex: 1;
+    text-align: center;
+    margin: 0;
+    font-weight: bold;
+    color: #1c3d5a;
+}
+
+.slide-panel {
     border: 1px solid #ccc;
+    padding: 12px 15px;
     margin-bottom: 8px;
 }
 
-.slide-block summary {
-    padding: 10px 12px;
-    background-color: #f7f9fb;
-    font-weight: bold;
+.slide-heading {
+    margin: 0 0 5px 0;
     color: #1c3d5a;
-    cursor: pointer;
-}
-
-.slide-block summary:focus {
-    outline: 3px solid #ffbf47;
-    outline-offset: -3px;
 }
 
 .slide-note {

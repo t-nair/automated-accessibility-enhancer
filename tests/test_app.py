@@ -558,6 +558,66 @@ def test_an_upload_bigger_than_the_request_limit_is_refused(client, monkeypatch)
     assert len(client.queued) == 0
 
 
+def test_a_stuck_submission_is_marked_failed_after_a_restart(client):
+    add_submission("stuck001", status="processing")
+    add_submission("stuck002", status="queued")
+    add_submission("fine0002", status="done")
+
+    app_module.recover_stuck_submissions()
+
+    assert app_module.get_submission("stuck001")["status"] == "error"
+    assert app_module.get_submission("stuck002")["status"] == "error"
+    assert app_module.get_submission("fine0002")["status"] == "done"
+
+
+def test_a_recovered_submission_explains_what_happened(client):
+    add_submission("stuck003", status="processing")
+
+    app_module.recover_stuck_submissions()
+    submission = app_module.get_submission("stuck003")
+
+    assert "restarted" in submission["error_message"]
+    assert len(submission["error_steps"]) > 0
+
+
+def test_old_submissions_are_deleted(client):
+    add_submission("old00001", submitted_at="2020-01-01 09:00")
+    add_submission("new00001", submitted_at=datetime.now().strftime("%Y-%m-%d %H:%M"))
+
+    app_module.delete_old_submissions()
+
+    assert app_module.get_submission("old00001") is None
+    assert app_module.get_submission("new00001") is not None
+
+
+def test_deleting_old_submissions_removes_their_files(client):
+    add_submission("old00002", submitted_at="2020-01-01 09:00")
+    updated = os.path.join(app_module.PROCESSED_FOLDER, "old00002_Lecture_updated.pptx")
+    copy_into("control_no_issues.pptx", updated)
+
+    app_module.delete_old_submissions()
+
+    assert not os.path.exists(updated)
+
+
+def test_a_submission_with_an_odd_date_is_left_alone(client):
+    add_submission("weird001", submitted_at="not a real date")
+
+    app_module.delete_old_submissions()
+
+    assert app_module.get_submission("weird001") is not None
+
+
+def test_an_oversized_upload_gets_a_friendly_message(client):
+    too_big = b"x" * (app_module.MAX_REQUEST_SIZE_MB * 1024 * 1024 + 1024)
+    data = {"presentation": (io.BytesIO(too_big), "huge.pptx")}
+
+    response = client.post("/upload", data=data, follow_redirects=True)
+
+    assert b"too large" in response.data
+    assert len(client.queued) == 0
+
+
 def test_a_new_visitor_gets_their_own_id(tmp_path, monkeypatch):
     data = tmp_path / "data2"
     data.mkdir()
