@@ -36,11 +36,16 @@ CAPTION_MODEL_NAME = "Qwen/Qwen2-VL-2B-Instruct"
 
 # the model is told once, here, what kind of description we want. Faculty never see
 # or type this, it is just how we ask for a caption that works as alt text.
+# course slides are full of diagrams, and asking about them directly gives much better
+# descriptions than a general request does. Tested on physics diagrams from a real
+# lecture deck: the model started naming what a diagram shows and reading its labels,
+# instead of only describing the shapes on it. Photographs were not made any worse.
 CAPTION_PROMPT = (
-    "Write alt text for this image in one or two short sentences. "
-    "Describe what is visible, and if the image contains legible text, include it. "
-    "Only state what you can clearly see. Describe things plainly instead of naming them if you are unsure. "
-    "Do not add mood, interpretation, or invented detail."
+    "Write alt text for this image in two or three short sentences. "
+    "If it is a diagram, chart or equation, say what kind it is, quote the labels that appear on it "
+    "exactly as they are written, and say how the parts are arranged or connected. "
+    "If it is a photograph, describe what is happening in it. "
+    "Only describe what is actually visible. Do not invent labels, numbers or values."
 )
 
 # the words on the slide usually say what the image is there to show, which helps the
