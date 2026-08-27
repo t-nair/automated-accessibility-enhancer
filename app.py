@@ -529,12 +529,16 @@ def read_report(report_text):
     already_had = 0
     no_description = 0
 
+    def slide_entry(number):
+        if number not in slides_by_number:
+            slides_by_number[number] = {"number": number, "shapes": [], "problems": [], "images": 0, "added": 0}
+            slides.append(slides_by_number[number])
+
+        return slides_by_number[number]
+
     for shape in report.get("shapes", []):
         number = shape["slide"]
-
-        if number not in slides_by_number:
-            slides_by_number[number] = {"number": number, "shapes": [], "images": 0, "added": 0}
-            slides.append(slides_by_number[number])
+        slide_entry(number)
 
         slides_by_number[number]["shapes"].append(shape)
 
@@ -549,12 +553,22 @@ def read_report(report_text):
         elif shape["kind"] == "other":
             no_description += 1
 
+    # problems are things a person has to fix, so they are listed against their slide
+    # and counted separately from the descriptions we wrote
+    problems = report.get("problems", [])
+
+    for problem in problems:
+        slide_entry(problem["slide"])["problems"].append(problem)
+
+    slides.sort(key=lambda slide: slide["number"])
+
     totals = {
         "slides": len(slides),
         "shapes": len(report.get("shapes", [])),
         "described": described,
         "already_had": already_had,
         "no_description": no_description,
+        "problems": len(problems),
     }
 
     return slides, totals

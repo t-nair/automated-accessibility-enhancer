@@ -1,6 +1,7 @@
 import os
 import sys
 import shutil
+import json
 
 import pytest
 from pptx import Presentation
@@ -153,6 +154,81 @@ def test_our_own_placeholder_counts_as_unhelpful():
 def test_a_description_that_mentions_a_picture_is_kept():
     # this should not be mistaken for the placeholder above, because the shape differs
     assert z_reorder.looks_like_junk_alt_text("Image Picture 4", "Picture 9") is False
+
+
+def get_problems(filename, folders):
+    input_folder, output_folder = folders
+    copy_fixture(filename, input_folder)
+    z_reorder.process_one_file(filename, input_folder, output_folder)
+
+    report_path = os.path.join(output_folder, os.path.splitext(filename)[0] + "_alt_text")
+
+    with open(report_path, encoding="utf-8") as f:
+        return json.load(f)["problems"]
+
+
+def kinds_found(problems):
+    kinds = []
+
+    for problem in problems:
+        kinds.append(problem["kind"])
+
+    return kinds
+
+
+def test_a_slide_with_no_title_is_reported(folders, fake_captions):
+    problems = get_problems("issue_checks_sampler.pptx", folders)
+
+    assert "no title" in kinds_found(problems)
+
+
+def test_a_repeated_title_is_reported(folders, fake_captions):
+    problems = get_problems("issue_checks_sampler.pptx", folders)
+
+    assert "repeated title" in kinds_found(problems)
+
+
+def test_an_unclear_link_is_reported(folders, fake_captions):
+    problems = get_problems("issue_checks_sampler.pptx", folders)
+
+    assert "unclear link" in kinds_found(problems)
+
+
+def test_a_table_without_a_header_row_is_reported(folders, fake_captions):
+    problems = get_problems("issue_checks_sampler.pptx", folders)
+
+    assert "table without a header row" in kinds_found(problems)
+
+
+def test_every_problem_says_which_slide_it_is_on(folders, fake_captions):
+    problems = get_problems("issue_checks_sampler.pptx", folders)
+
+    for problem in problems:
+        assert problem["slide"] > 0
+        assert problem["detail"]
+
+
+def test_a_tidy_deck_has_nothing_to_report(folders, fake_captions):
+    problems = get_problems("control_no_issues.pptx", folders)
+
+    assert kinds_found(problems) == []
+
+
+def test_an_empty_slide_is_reported(folders, fake_captions):
+    problems = get_problems("issue_empty_slide_no_shapes.pptx", folders)
+
+    assert "empty slide" in kinds_found(problems)
+
+
+def test_link_text_that_says_something_is_left_alone():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    box = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1))
+    run = box.text_frame.paragraphs[0].add_run()
+    run.text = "the course syllabus"
+    run.hyperlink.address = "https://example.com/syllabus"
+
+    assert z_reorder.find_vague_links(slide) == []
 
 
 def get_first_picture(path):

@@ -108,6 +108,7 @@
                     <li><strong>{{ totals.described }}</strong> images we described</li>
                     <li><strong>{{ totals.already_had }}</strong> images that already had a description</li>
                     <li><strong>{{ totals.no_description }}</strong> shapes with nothing to announce</li>
+                    <li><strong>{{ totals.problems }}</strong> things for you to fix</li>
                 </ul>
 
                 <div class="slide-viewer" id="slide-viewer">
@@ -129,6 +130,17 @@
                                     {{ slide.shapes|length }} shapes{% if slide.added %}, {{ slide.added }} described by us{% endif %}
                                 </span>
                             </h4>
+
+                            {% if slide.problems %}
+                                <ul class="problem-list">
+                                    {% for problem in slide.problems %}
+                                        <li class="problem-item">
+                                            <span class="problem-kind">{{ problem.kind }}</span>
+                                            <span class="problem-detail">{{ problem.detail }}</span>
+                                        </li>
+                                    {% endfor %}
+                                </ul>
+                            {% endif %}
 
                             <ul class="shape-list">
                                 {% for shape in slide.shapes %}

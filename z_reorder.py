@@ -374,10 +374,10 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
     alt_text_output_file = os.path.join(new_directory, os.path.splitext(filename)[0] + "_alt_text")
 
     try:
-        records = fix_titles_and_describe_shapes(prs, filename, progress_callback)
+        records, problems = fix_titles_and_describe_shapes(prs, filename, progress_callback)
 
         with open(alt_text_output_file, "w", encoding="utf-8") as f:
-            json.dump({"file": filename, "shapes": records}, f, indent=2)
+            json.dump({"file": filename, "shapes": records, "problems": problems}, f, indent=2)
     except Exception as e:
         logging.error(f"Something went wrong processing shapes in {filename}. Error: {e}")
         return False, "We opened your file, but something went wrong while checking your slides for accessibility issues.", [
@@ -414,6 +414,93 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
     return True, None, None
 
 
+# link text like "click here" tells a screen reader user nothing, because they often
+# jump through a page link by link, away from the words around it
+VAGUE_LINK_WORDS = ("click here", "here", "read more", "more", "link", "this", "this link", "click")
+
+
+def get_slide_title(slide):
+    try:
+        placeholder = slide.shapes.title
+    except Exception:
+        placeholder = None
+
+    if placeholder is not None and placeholder.has_text_frame and placeholder.text.strip():
+        return placeholder.text.strip()
+
+    # some decks do not use the title placeholder, but do name the shape "Title"
+    for shape in slide.shapes:
+        if "Title" in shape.name and shape.has_text_frame and shape.text.strip():
+            return shape.text.strip()
+
+    return None
+
+
+def find_vague_links(slide):
+    found = []
+
+    for shape in slide.shapes:
+        if not shape.has_text_frame:
+            continue
+
+        for paragraph in shape.text_frame.paragraphs:
+            for run in paragraph.runs:
+                if run.hyperlink is None or not run.hyperlink.address:
+                    continue
+
+                words = run.text.strip().lower().strip(".,:;!?")
+
+                if words in VAGUE_LINK_WORDS:
+                    found.append(run.text.strip())
+
+    return found
+
+
+def find_tables_without_a_header(slide):
+    found = []
+
+    for shape in slide.shapes:
+        if shape.has_table and not shape.table.first_row:
+            found.append(shape.name)
+
+    return found
+
+
+# looks for the accessibility problems we can spot but should not quietly change,
+# because only the person who wrote the slides knows what the right wording is
+def find_slide_problems(slide, slide_number, title, seen_titles):
+    problems = []
+
+    if title is None:
+        problems.append({
+            "slide": slide_number,
+            "kind": "no title",
+            "detail": "This slide has no title, so a screen reader cannot announce what it is about.",
+        })
+    elif title.lower() in seen_titles:
+        problems.append({
+            "slide": slide_number,
+            "kind": "repeated title",
+            "detail": f"Another slide is also called \"{title}\", which makes them hard to tell apart.",
+        })
+
+    for link_text in find_vague_links(slide):
+        problems.append({
+            "slide": slide_number,
+            "kind": "unclear link",
+            "detail": f"The link says \"{link_text}\", which does not say where it goes.",
+        })
+
+    for table_name in find_tables_without_a_header(slide):
+        problems.append({
+            "slide": slide_number,
+            "kind": "table without a header row",
+            "detail": f"The table {table_name} has no header row, so its columns are not announced.",
+        })
+
+    return problems
+
+
 def count_images_needing_captions(prs):
     total = 0
 
@@ -430,6 +517,8 @@ def fix_titles_and_describe_shapes(prs, filename, progress_callback=None):
     total_to_caption = count_images_needing_captions(prs)
     captions_done = 0
     records = []
+    problems = []
+    seen_titles = set()
 
     if progress_callback is not None:
         progress_callback(captions_done, total_to_caption)
@@ -438,7 +527,18 @@ def fix_titles_and_describe_shapes(prs, filename, progress_callback=None):
 
         if len(slide.shapes) == 0:
             logging.warning(f"{filename}: slide {slide_number} has no shapes, skipping title fix.")
+            problems.append({
+                "slide": slide_number,
+                "kind": "empty slide",
+                "detail": "This slide has nothing on it.",
+            })
             continue
+
+        title = get_slide_title(slide)
+        problems.extend(find_slide_problems(slide, slide_number, title, seen_titles))
+
+        if title is not None:
+            seen_titles.add(title.lower())
 
         slide_text = get_slide_text(slide)
 
@@ -457,7 +557,7 @@ def fix_titles_and_describe_shapes(prs, filename, progress_callback=None):
                 if progress_callback is not None:
                     progress_callback(captions_done, total_to_caption)
 
-    return records
+    return records, problems
 
 
 # PowerPoint and Google Slides often fill alt text in by themselves, usually with the

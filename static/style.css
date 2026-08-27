@@ -427,6 +427,37 @@ progress::-moz-progress-bar {
     color: #555;
 }
 
+.problem-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 10px 0;
+}
+
+.problem-item {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    background-color: #fdf3f2;
+    border-left: 4px solid #8c2f2b;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+}
+
+.problem-kind {
+    font-size: 0.7em;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    background-color: #8c2f2b;
+    color: white;
+    padding: 3px 6px;
+    white-space: nowrap;
+    height: fit-content;
+}
+
+.problem-detail {
+    color: #222;
+}
+
 .shape-list {
     list-style: none;
     padding: 10px 12px;

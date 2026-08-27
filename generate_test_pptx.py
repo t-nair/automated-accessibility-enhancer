@@ -124,6 +124,36 @@ def make_issue_all_issues_combined():
     save_presentation(prs, "issue_all_issues_combined.pptx")
 
 
+def make_issue_checks_sampler():
+    prs = Presentation()
+
+    first = prs.slides.add_slide(prs.slide_layouts[5])
+    first.shapes.title.text = "Introduction"
+
+    # the same title again, which is hard to tell apart when moving by heading
+    second = prs.slides.add_slide(prs.slide_layouts[5])
+    second.shapes.title.text = "Introduction"
+
+    no_title = prs.slides.add_slide(prs.slide_layouts[6])
+    body = no_title.shapes.add_textbox(Inches(1), Inches(1), Inches(6), Inches(1))
+    body.name = "Body 1"
+    body.text_frame.text = "Some content with no heading above it"
+
+    link_slide = prs.slides.add_slide(prs.slide_layouts[5])
+    link_slide.shapes.title.text = "Further reading"
+    link_box = link_slide.shapes.add_textbox(Inches(1), Inches(2), Inches(6), Inches(1))
+    link_run = link_box.text_frame.paragraphs[0].add_run()
+    link_run.text = "click here"
+    link_run.hyperlink.address = "https://example.com/syllabus"
+
+    table_slide = prs.slides.add_slide(prs.slide_layouts[5])
+    table_slide.shapes.title.text = "Results"
+    table_shape = table_slide.shapes.add_table(3, 2, Inches(1), Inches(2), Inches(6), Inches(2))
+    table_shape.table.first_row = False
+
+    save_presentation(prs, "issue_checks_sampler.pptx")
+
+
 def make_corrupt_empty_file():
     output_path = os.path.join(OUTPUT_FOLDER, "corrupt_empty_file.pptx")
     with open(output_path, "wb"):
@@ -179,6 +209,7 @@ if __name__ == "__main__":
     make_issue_empty_slide_no_shapes()
     make_issue_multiple_images_no_alt_text()
     make_issue_all_issues_combined()
+    make_issue_checks_sampler()
 
     make_corrupt_empty_file()
     make_corrupt_random_bytes()
