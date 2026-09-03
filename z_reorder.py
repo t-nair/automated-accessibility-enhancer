@@ -6,6 +6,7 @@ import logging
 import subprocess
 import torch
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from PIL import Image
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 
@@ -30,6 +31,15 @@ LIBREOFFICE_LOCATIONS = [
     r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
 ]
 CONVERT_TIMEOUT_SECONDS = 120
+
+# PowerPoint fills a picture's alt text with its source filename when the picture is
+# inserted, so a deck can look fully described while telling a screen reader nothing.
+# Alt text ending in one of these is treated as missing and gets a real caption.
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff",
+                    ".emf", ".wmf", ".svg", ".webp")
+
+# a real title placeholder is authoritative, the shape name is only a fallback
+TITLE_PLACEHOLDERS = (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
 
 CAPTION_MODEL_NAME = "Qwen/Qwen2-VL-2B-Instruct"
 
@@ -406,12 +416,103 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
     return True, None, None
 
 
+def get_shape_type(shape):
+    """Return the shape's MSO type, or None if python-pptx cannot resolve it.
+
+    python-pptx raises for shape types it does not model. One exotic shape should
+    not take down the whole deck, so callers treat None as "not a picture".
+    """
+    try:
+        return shape.shape_type
+    except (NotImplementedError, ValueError):
+        return None
+
+
+def is_picture(shape):
+    return get_shape_type(shape) == MSO_SHAPE_TYPE.PICTURE
+
+
+def is_title(shape):
+    """True if the shape looks like a slide title.
+
+    The placeholder type is checked first because it is authoritative, and the
+    shape name is a fallback so plain text boxes acting as titles are caught too.
+    The name check is case insensitive: matching only "Title" misses a real title
+    placeholder named "title 1". Subtitles are excluded, since "subtitle"
+    contains "title" but is not one.
+    """
+    try:
+        if shape.is_placeholder and shape.placeholder_format.type in TITLE_PLACEHOLDERS:
+            return True
+    except (AttributeError, KeyError, ValueError):
+        pass
+
+    name = shape.name.lower()
+
+    return "title" in name and "subtitle" not in name
+
+
+def is_placeholder_alt_text(alt_text, shape_name):
+    """True if alt text exists but is not a real description.
+
+    Covers PowerPoint's auto-filled source filename, and alt text that only
+    repeats the shape name.
+    """
+    if not alt_text:
+        return False
+
+    candidate = alt_text.strip().lower()
+
+    return (candidate.endswith(IMAGE_EXTENSIONS)
+            or candidate == shape_name.strip().lower())
+
+
+def needs_caption(shape):
+    """True if this is a picture with no alt text a screen reader could use."""
+    if not is_picture(shape):
+        return False
+
+    alt_text = get_picture_alt_text(shape)
+
+    return not alt_text or is_placeholder_alt_text(alt_text, shape.name)
+
+
+def move_titles_to_front(slide):
+    """Move title shapes to the front of the slide's reading order.
+
+    Returns the number of shapes moved. The shape list is snapshotted before any
+    mutation: re-reading slide.shapes[0] while reordering re-anchors on a shape
+    that has already moved, which reverses the order of a slide with more than
+    one title.
+    """
+    shapes = list(slide.shapes)
+    titles = [shape for shape in shapes if is_title(shape)]
+
+    if not titles:
+        return 0
+
+    # already in the right order, so nothing to do. This also makes a second run
+    # over an already-processed deck a no-op.
+    if shapes[:len(titles)] == titles:
+        return 0
+
+    # Anchor on the first non-title shape rather than shapes[0]. If shapes[0] is
+    # itself a title, inserting the remaining titles before it puts them in
+    # reverse order. The early return above guarantees a non-title shape exists.
+    anchor = next(shape for shape in shapes if not is_title(shape))._element
+
+    for title in titles:
+        anchor.addprevious(title._element)
+
+    return len(titles)
+
+
 def count_images_needing_captions(prs):
     total = 0
 
     for slide in prs.slides:
         for shape in slide.shapes:
-            if shape.shape_type == 13 and not get_picture_alt_text(shape):
+            if needs_caption(shape):
                 total += 1
 
     return total
@@ -432,12 +533,15 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
         slide_text = get_slide_text(slide)
 
-        for shape in slide.shapes:
-            if "Title" in shape.name:
-                cursor_sp = slide.shapes[0]._element
-                cursor_sp.addprevious(shape._element)
+        moved = move_titles_to_front(slide)
 
-            needed_caption = shape.shape_type == 13 and not get_picture_alt_text(shape)
+        if moved:
+            logging.info(f"{filename}: slide {slide_number} moved {moved} title shape(s) to the front.")
+
+        # read the shapes back after reordering, so the report lists them in the
+        # order a screen reader will actually announce them
+        for shape in list(slide.shapes):
+            needed_caption = needs_caption(shape)
 
             write_alt_text_line(shape, f, slide_text)
 
@@ -459,12 +563,17 @@ def set_picture_alt_text(shape, alt_text):
 
 
 def write_alt_text_line(shape, f, slide_text=""):
-    if shape.shape_type == 13:  # 13 is the shape type for pictures
+    if is_picture(shape):
         existing_alt_text = get_picture_alt_text(shape)
 
-        if existing_alt_text:
+        if existing_alt_text and not is_placeholder_alt_text(existing_alt_text, shape.name):
             f.write(f" \n Shape: {shape.name} \n - Alt Text: {existing_alt_text} \n")
         else:
+            if existing_alt_text:
+                logging.info(
+                    f"{shape.name}: replacing filename-style alt text "
+                    f"{existing_alt_text!r} with a real description.")
+
             try:
                 alt_text = generate_image_caption(shape, slide_text)
             except Exception as e:
