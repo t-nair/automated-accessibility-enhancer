@@ -427,6 +427,51 @@ progress::-moz-progress-bar {
     color: #555;
 }
 
+.tab-bar {
+    display: flex;
+    gap: 4px;
+    margin: 15px 0 0 0;
+    border-bottom: 2px solid #ccc;
+}
+
+.tab-button {
+    background-color: #eef1f4;
+    color: #1c3d5a;
+    margin-top: 0;
+    padding: 10px 16px;
+    font-size: 0.95em;
+}
+
+.tab-button:hover {
+    background-color: #dfe5ea;
+}
+
+.tab-button-chosen {
+    background-color: #1c3d5a;
+    color: white;
+}
+
+.tab-panel {
+    padding-top: 12px;
+}
+
+.reading-level {
+    background-color: #f7f9fb;
+    border: 1px solid #7d97ad;
+    padding: 10px 15px;
+}
+
+.problem-where {
+    display: block;
+    font-size: 0.85em;
+    color: #555;
+}
+
+.problem-body {
+    flex: 1;
+    min-width: 0;
+}
+
 .problem-list {
     list-style: none;
     padding: 0;

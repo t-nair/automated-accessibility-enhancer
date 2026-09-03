@@ -220,6 +220,92 @@ def test_an_empty_slide_is_reported(folders, fake_captions):
     assert "empty slide" in kinds_found(problems)
 
 
+def make_slide_with_shapes():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    return prs, slide
+
+
+def test_a_shape_off_the_slide_is_spotted():
+    prs, slide = make_slide_with_shapes()
+    gone = slide.shapes.add_textbox(Inches(-12), Inches(1), Inches(3), Inches(1))
+    gone.name = "HiddenOffSlide"
+    gone.text_frame.text = "nobody can see this"
+
+    found = z_reorder.find_offslide_shapes(slide, prs.slide_width, prs.slide_height)
+
+    assert "HiddenOffSlide" in found
+
+
+def test_a_shape_only_just_over_the_edge_is_left_alone():
+    prs, slide = make_slide_with_shapes()
+    # real decks are full of shapes a hair over the edge, and they are still visible
+    nearly = slide.shapes.add_textbox(Inches(-0.1), Inches(1), Inches(4), Inches(1))
+    nearly.name = "SlightlyOver"
+    nearly.text_frame.text = "still on the slide"
+
+    assert z_reorder.find_offslide_shapes(slide, prs.slide_width, prs.slide_height) == []
+
+
+def test_shapes_added_out_of_order_are_spotted():
+    prs, slide = make_slide_with_shapes()
+    lower = slide.shapes.add_textbox(Inches(1), Inches(5), Inches(4), Inches(1))
+    lower.text_frame.text = "this is lower down but was added first"
+    upper = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1))
+    upper.text_frame.text = "this is at the top but was added second"
+
+    assert z_reorder.reading_order_looks_wrong(slide) is True
+
+
+def test_shapes_added_in_order_are_left_alone():
+    prs, slide = make_slide_with_shapes()
+    upper = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1))
+    upper.text_frame.text = "top of the slide, added first"
+    lower = slide.shapes.add_textbox(Inches(1), Inches(5), Inches(4), Inches(1))
+    lower.text_frame.text = "further down, added second"
+
+    assert z_reorder.reading_order_looks_wrong(slide) is False
+
+
+def test_a_slide_with_speaker_notes_is_spotted():
+    prs, slide = make_slide_with_shapes()
+    slide.notes_slide.notes_text_frame.text = "Remember to mention the deadline"
+
+    assert z_reorder.slide_has_notes(slide) is True
+
+
+def test_a_slide_without_speaker_notes_is_left_alone():
+    prs, slide = make_slide_with_shapes()
+
+    assert z_reorder.slide_has_notes(slide) is False
+
+
+def test_empty_table_cells_are_reported():
+    prs, slide = make_slide_with_shapes()
+    slide.shapes.add_table(2, 2, Inches(1), Inches(1), Inches(4), Inches(2))
+
+    problems = z_reorder.find_table_cell_problems(slide)
+
+    assert any("empty cell" in problem for problem in problems)
+
+
+def test_reading_level_is_worked_out_for_a_decent_amount_of_text():
+    text = ("The magnetic field around a wire depends on the current. " * 8)
+
+    assert z_reorder.measure_reading_level(text) is not None
+
+
+def test_reading_level_is_skipped_when_there_are_barely_any_words():
+    assert z_reorder.measure_reading_level("Just a few words here.") is None
+
+
+def test_counting_syllables():
+    assert z_reorder.count_syllables("cat") == 1
+    assert z_reorder.count_syllables("making") == 2
+    assert z_reorder.count_syllables("make") == 1
+
+
 def test_link_text_that_says_something_is_left_alone():
     prs = Presentation()
     slide = prs.slides.add_slide(prs.slide_layouts[6])

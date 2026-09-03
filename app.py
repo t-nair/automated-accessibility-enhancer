@@ -569,6 +569,7 @@ def read_report(report_text):
         "already_had": already_had,
         "no_description": no_description,
         "problems": len(problems),
+        "reading_level": report.get("reading_level"),
     }
 
     return slides, totals

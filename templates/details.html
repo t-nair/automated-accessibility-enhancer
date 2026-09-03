@@ -111,7 +111,50 @@
                     <li><strong>{{ totals.problems }}</strong> things for you to fix</li>
                 </ul>
 
-                <div class="slide-viewer" id="slide-viewer">
+                <div class="tab-bar" id="tab-bar" role="tablist" hidden>
+                    <button type="button" class="tab-button" id="tab-slides"
+                            role="tab" aria-controls="slide-viewer" aria-selected="true">
+                        Slide by slide
+                    </button>
+                    <button type="button" class="tab-button" id="tab-checks"
+                            role="tab" aria-controls="panel-checks" aria-selected="false">
+                        Things to fix ({{ totals.problems }})
+                    </button>
+                </div>
+
+                <section class="tab-panel" id="panel-checks" role="tabpanel" aria-labelledby="tab-checks">
+                    <h4>Things to fix</h4>
+
+                    {% if totals.reading_level %}
+                        <p class="reading-level">
+                            The words on these slides read at about a
+                            <strong>grade {{ totals.reading_level }}</strong> level.
+                            Around grade 8 suits most audiences.
+                        </p>
+                    {% endif %}
+
+                    {% if totals.problems %}
+                        <p>We do not change any of these ourselves, because only you know what the right wording is.</p>
+
+                        <ul class="problem-list">
+                            {% for slide in slides %}
+                                {% for problem in slide.problems %}
+                                    <li class="problem-item">
+                                        <span class="problem-kind">{{ problem.kind }}</span>
+                                        <span class="problem-body">
+                                            <span class="problem-where">Slide {{ problem.slide }}</span>
+                                            <span class="problem-detail">{{ problem.detail }}</span>
+                                        </span>
+                                    </li>
+                                {% endfor %}
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p>We did not find any of the problems we check for.</p>
+                    {% endif %}
+                </section>
+
+                <div class="slide-viewer tab-panel" id="slide-viewer" role="tabpanel" aria-labelledby="tab-slides">
 
                     <div class="slide-nav" id="slide-nav" hidden>
                         <button type="button" id="slide-prev">&larr; Previous</button>
@@ -130,17 +173,6 @@
                                     {{ slide.shapes|length }} shapes{% if slide.added %}, {{ slide.added }} described by us{% endif %}
                                 </span>
                             </h4>
-
-                            {% if slide.problems %}
-                                <ul class="problem-list">
-                                    {% for problem in slide.problems %}
-                                        <li class="problem-item">
-                                            <span class="problem-kind">{{ problem.kind }}</span>
-                                            <span class="problem-detail">{{ problem.detail }}</span>
-                                        </li>
-                                    {% endfor %}
-                                </ul>
-                            {% endif %}
 
                             <ul class="shape-list">
                                 {% for shape in slide.shapes %}

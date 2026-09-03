@@ -144,6 +144,23 @@ def get_slide_text(slide):
     return slide_text
 
 
+# the same words, but not cut short, because the reading level is worked out from
+# everything on the slide rather than from a prompt sized piece of it
+def get_all_slide_text(slide):
+    pieces = []
+
+    for shape in slide.shapes:
+        if not shape.has_text_frame:
+            continue
+
+        text = shape.text.strip()
+
+        if text:
+            pieces.append(text)
+
+    return " ".join(pieces)
+
+
 def build_caption_prompt(slide_text):
     if not slide_text:
         return CAPTION_PROMPT
@@ -374,10 +391,15 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
     alt_text_output_file = os.path.join(new_directory, os.path.splitext(filename)[0] + "_alt_text")
 
     try:
-        records, problems = fix_titles_and_describe_shapes(prs, filename, progress_callback)
+        records, problems, reading_level = fix_titles_and_describe_shapes(prs, filename, progress_callback)
 
         with open(alt_text_output_file, "w", encoding="utf-8") as f:
-            json.dump({"file": filename, "shapes": records, "problems": problems}, f, indent=2)
+            json.dump({
+                "file": filename,
+                "shapes": records,
+                "problems": problems,
+                "reading_level": reading_level,
+            }, f, indent=2)
     except Exception as e:
         logging.error(f"Something went wrong processing shapes in {filename}. Error: {e}")
         return False, "We opened your file, but something went wrong while checking your slides for accessibility issues.", [
@@ -466,9 +488,91 @@ def find_tables_without_a_header(slide):
     return found
 
 
+# shapes sitting completely outside the slide are invisible to everyone looking at it,
+# but a screen reader still reads them out
+def find_offslide_shapes(slide, slide_width, slide_height):
+    found = []
+
+    for shape in slide.shapes:
+        if shape.left is None or shape.top is None or shape.width is None or shape.height is None:
+            continue
+
+        right = shape.left + shape.width
+        bottom = shape.top + shape.height
+
+        completely_outside = (
+            right <= 0
+            or bottom <= 0
+            or shape.left >= slide_width
+            or shape.top >= slide_height
+        )
+
+        if completely_outside:
+            found.append(shape.name)
+
+    return found
+
+
+# shapes are read out in the order they were added, which is not always the order they
+# are laid out in. Half an inch of slack stops side by side shapes being reported.
+def reading_order_looks_wrong(slide):
+    positions = []
+
+    for index, shape in enumerate(slide.shapes):
+        if shape.top is None or shape.left is None:
+            continue
+
+        if shape.has_text_frame and shape.text.strip():
+            positions.append((index, shape.top, shape.left))
+        elif shape.shape_type == 13:
+            positions.append((index, shape.top, shape.left))
+
+    if len(positions) < 2:
+        return False
+
+    slack = 457200  # half an inch in the units python-pptx uses
+    by_position = sorted(positions, key=lambda item: (item[1] // slack, item[2]))
+
+    return [item[0] for item in by_position] != [item[0] for item in positions]
+
+
+def find_table_cell_problems(slide):
+    found = []
+
+    for shape in slide.shapes:
+        if not shape.has_table:
+            continue
+
+        merged = 0
+        blank = 0
+
+        for row in shape.table.rows:
+            for cell in row.cells:
+                if cell.is_merge_origin or cell.is_spanned:
+                    merged += 1
+
+                if not cell.text.strip():
+                    blank += 1
+
+        if merged:
+            found.append(f"The table {shape.name} has merged cells, which screen readers read out of order.")
+
+        if blank:
+            found.append(f"The table {shape.name} has {blank} empty cell(s). Putting N/A in them makes the table easier to follow.")
+
+    return found
+
+
+def slide_has_notes(slide):
+    if not slide.has_notes_slide:
+        return False
+
+    return bool(slide.notes_slide.notes_text_frame.text.strip())
+
+
 # looks for the accessibility problems we can spot but should not quietly change,
 # because only the person who wrote the slides knows what the right wording is
-def find_slide_problems(slide, slide_number, title, seen_titles):
+def find_slide_problems(slide, slide_number, title, seen_titles, slide_width=None, slide_height=None):
     problems = []
 
     if title is None:
@@ -498,7 +602,92 @@ def find_slide_problems(slide, slide_number, title, seen_titles):
             "detail": f"The table {table_name} has no header row, so its columns are not announced.",
         })
 
+    for detail in find_table_cell_problems(slide):
+        problems.append({
+            "slide": slide_number,
+            "kind": "table cells",
+            "detail": detail,
+        })
+
+    if slide_width is not None and slide_height is not None:
+        for shape_name in find_offslide_shapes(slide, slide_width, slide_height):
+            problems.append({
+                "slide": slide_number,
+                "kind": "off the slide",
+                "detail": f"{shape_name} sits outside the slide, so nobody sees it but a screen reader still reads it.",
+            })
+
+    if reading_order_looks_wrong(slide):
+        problems.append({
+            "slide": slide_number,
+            "kind": "reading order",
+            "detail": "Things on this slide are read out in a different order from the way they are laid out.",
+        })
+
+    if slide_has_notes(slide):
+        problems.append({
+            "slide": slide_number,
+            "kind": "speaker notes",
+            "detail": "This slide has speaker notes. They are not always read aloud, so put anything important on the slide itself.",
+        })
+
     return problems
+
+
+VOWELS = "aeiouy"
+
+
+def count_syllables(word):
+    word = word.lower().strip(".,:;!?\"'()")
+
+    if not word:
+        return 0
+
+    syllables = 0
+    previous_was_vowel = False
+
+    for letter in word:
+        is_vowel = letter in VOWELS
+
+        if is_vowel and not previous_was_vowel:
+            syllables += 1
+
+        previous_was_vowel = is_vowel
+
+    # a trailing "e" is usually silent, as in "make"
+    if word.endswith("e") and syllables > 1:
+        syllables -= 1
+
+    if syllables == 0:
+        syllables = 1
+
+    return syllables
+
+
+# the Flesch Kincaid grade level, which says roughly what school year someone would
+# need to read the text comfortably. It is only a rough guide on slides, because
+# slides are full of short fragments rather than full sentences.
+def measure_reading_level(text):
+    sentences = 0
+
+    for mark in ".!?":
+        sentences += text.count(mark)
+
+    words = text.split()
+
+    if len(words) < 30 or sentences == 0:
+        return None
+
+    syllables = 0
+
+    for word in words:
+        syllables += count_syllables(word)
+
+    words_per_sentence = len(words) / sentences
+    syllables_per_word = syllables / len(words)
+    grade = (0.39 * words_per_sentence) + (11.8 * syllables_per_word) - 15.59
+
+    return round(grade, 1)
 
 
 def count_images_needing_captions(prs):
@@ -519,6 +708,7 @@ def fix_titles_and_describe_shapes(prs, filename, progress_callback=None):
     records = []
     problems = []
     seen_titles = set()
+    all_words = []
 
     if progress_callback is not None:
         progress_callback(captions_done, total_to_caption)
@@ -535,12 +725,15 @@ def fix_titles_and_describe_shapes(prs, filename, progress_callback=None):
             continue
 
         title = get_slide_title(slide)
-        problems.extend(find_slide_problems(slide, slide_number, title, seen_titles))
+        problems.extend(find_slide_problems(
+            slide, slide_number, title, seen_titles, prs.slide_width, prs.slide_height
+        ))
 
         if title is not None:
             seen_titles.add(title.lower())
 
         slide_text = get_slide_text(slide)
+        all_words.append(get_all_slide_text(slide))
 
         for shape in slide.shapes:
             if "Title" in shape.name:
@@ -557,7 +750,9 @@ def fix_titles_and_describe_shapes(prs, filename, progress_callback=None):
                 if progress_callback is not None:
                     progress_callback(captions_done, total_to_caption)
 
-    return records, problems
+    reading_level = measure_reading_level(" ".join(all_words))
+
+    return records, problems, reading_level
 
 
 # PowerPoint and Google Slides often fill alt text in by themselves, usually with the

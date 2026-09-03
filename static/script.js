@@ -160,6 +160,61 @@ if (submissionsTable) {
 }
 
 
+const tabBar = document.getElementById("tab-bar");
+
+// without JavaScript both sections are simply shown one after the other, which reads
+// fine. With it, the buttons appear and only one section is shown at a time.
+if (tabBar) {
+    const tabs = tabBar.querySelectorAll(".tab-button");
+
+    function showTab(chosen) {
+        for (let i = 0; i < tabs.length; i++) {
+            const tab = tabs[i];
+            const panel = document.getElementById(tab.getAttribute("aria-controls"));
+            const isChosen = (tab === chosen);
+
+            tab.setAttribute("aria-selected", isChosen ? "true" : "false");
+            tab.classList.toggle("tab-button-chosen", isChosen);
+            tab.tabIndex = isChosen ? 0 : -1;
+
+            if (panel) {
+                panel.hidden = !isChosen;
+            }
+        }
+    }
+
+    for (let i = 0; i < tabs.length; i++) {
+        tabs[i].addEventListener("click", function () {
+            showTab(tabs[i]);
+        });
+    }
+
+    // left and right arrows move between the tabs, which is how tabs usually behave
+    tabBar.addEventListener("keydown", function (event) {
+        let current = -1;
+
+        for (let i = 0; i < tabs.length; i++) {
+            if (tabs[i].getAttribute("aria-selected") === "true") {
+                current = i;
+            }
+        }
+
+        if (event.key === "ArrowLeft" && current > 0) {
+            showTab(tabs[current - 1]);
+            tabs[current - 1].focus();
+        }
+
+        if (event.key === "ArrowRight" && current < tabs.length - 1) {
+            showTab(tabs[current + 1]);
+            tabs[current + 1].focus();
+        }
+    });
+
+    tabBar.hidden = false;
+    showTab(tabs[0]);
+}
+
+
 const slideViewer = document.getElementById("slide-viewer");
 
 // without JavaScript every slide is simply shown one after another, which still works.
