@@ -419,8 +419,31 @@ def test_filename_style_alt_text_is_not_a_description(alt_text):
     assert z_reorder.is_placeholder_alt_text(alt_text, "Picture 3")
 
 
-def test_alt_text_that_only_repeats_the_shape_name_is_not_a_description():
-    assert z_reorder.is_placeholder_alt_text("Picture 3", "Picture 3")
+@pytest.mark.parametrize("name", [
+    "Picture 3",
+    "Image 5",
+    "Graphic 7",
+    "(Picture 12)",
+    "Picture Placeholder 2",
+    "Content Placeholder 4",
+])
+def test_alt_text_repeating_an_auto_generated_shape_name_is_not_a_description(name):
+    assert z_reorder.is_placeholder_alt_text(name, name)
+
+
+@pytest.mark.parametrize("name", [
+    "Water cycle diagram",
+    "Free body diagram of the beam",
+    "Beam",
+])
+def test_a_description_matching_an_author_chosen_shape_name_is_kept(name):
+    # someone who renames a shape and writes the same text as alt text meant it.
+    # Replacing real alt text is worse than leaving a thin description alone.
+    assert not z_reorder.is_placeholder_alt_text(name, name)
+
+
+def test_a_real_description_on_an_auto_named_shape_is_kept():
+    assert not z_reorder.is_placeholder_alt_text("A blue square", "Picture 3")
 
 
 @pytest.mark.parametrize("alt_text", [

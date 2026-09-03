@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import time
 import shutil
 import logging
@@ -37,6 +38,13 @@ CONVERT_TIMEOUT_SECONDS = 120
 # Alt text ending in one of these is treated as missing and gets a real caption.
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff",
                     ".emf", ".wmf", ".svg", ".webp")
+
+# The names PowerPoint gives a picture on its own, e.g. "Picture 3", "Image 5".
+# Alt text that only repeats a name like this says nothing, but alt text that
+# repeats a name the author chose deliberately may well be a real description,
+# so only auto-generated names count as placeholder text.
+AUTO_SHAPE_NAME = re.compile(
+    r"^\(?(?:picture|image|graphic|picture placeholder|content placeholder)\s*\d+\)?$")
 
 # a real title placeholder is authoritative, the shape name is only a fallback
 TITLE_PLACEHOLDERS = (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
@@ -456,15 +464,22 @@ def is_placeholder_alt_text(alt_text, shape_name):
     """True if alt text exists but is not a real description.
 
     Covers PowerPoint's auto-filled source filename, and alt text that only
-    repeats the shape name.
+    repeats a shape name PowerPoint generated itself.
+
+    Alt text matching a name the author chose is left alone. Someone who renames
+    a shape to "Water cycle diagram" and writes the same description meant it,
+    and replacing real alt text is worse than leaving a thin description alone.
     """
     if not alt_text:
         return False
 
     candidate = alt_text.strip().lower()
+    name = shape_name.strip().lower()
 
-    return (candidate.endswith(IMAGE_EXTENSIONS)
-            or candidate == shape_name.strip().lower())
+    if candidate.endswith(IMAGE_EXTENSIONS):
+        return True
+
+    return candidate == name and AUTO_SHAPE_NAME.match(name) is not None
 
 
 def needs_caption(shape):
