@@ -1,0 +1,31 @@
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+
+# the website, its tests, and its sample decks are not part of the Lambda image
+app.py
+templates/
+static/
+tests/
+generate_test_pptx.py
+Error Test PPTX/
+requirements-web.txt
+requirements-dev.txt
+
+# infrastructure code describes the function, it does not run inside it
+infra/
+Dockerfile
+.dockerignore
+
+# local runtime data
+uploads/
+processed/
+pptx_input/
+pptx_output/
+data/
+pipeline.log
+*.md

@@ -18,3 +18,28 @@ pipeline.log
 # database and session key are runtime data, not source
 data/submissions.db
 data/secret_key.txt
+
+# Terraform working directories and provider downloads
+**/.terraform/*
+
+# State, and the local state the bootstrap step leaves behind. Never commit
+# these: state holds resource ids and can hold values that were meant to stay
+# out of the repository.
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+
+# Real variable values. The .example files next to them are committed instead.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Saved plans, which are a snapshot of state as much as of the diff
+tfplan
+*.tfplan
+
+crash.log
+crash.*.log
+
+# .terraform.lock.hcl is deliberately not ignored: it pins provider versions,
+# so committing it is what makes a plan reproducible.

@@ -1,0 +1,29 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+
+# From the bootstrap output of the same name.
+state_bucket_name = "aae-tfstate-CHANGE-ME"
+
+project     = "aae"
+environment = "dev"
+aws_region  = "us-west-2"
+
+# Set this to the tag you pushed to ECR. "latest" works to start with, but
+# pinning a build number is what makes a rollback possible.
+image_tag = "latest"
+
+# Only regions serving the bedrock-mantle endpoint work here: us-east-1,
+# us-east-2, us-west-2, eu-west-1, eu-central-1, ap-northeast-1 and others.
+bedrock_region   = "us-west-2"
+bedrock_model_id = "anthropic.claude-opus-5"
+
+# How long real course material sits in S3.
+uploads_expiration_days   = 7
+processed_expiration_days = 30
+
+# Confirm the subscription email AWS sends, or these get nothing.
+alarm_email_addresses = ["you@uw.edu"]
+
+github_repository = "t-nair/automated-accessibility-enhancer"
+
+# Set to false if this AWS account already has a GitHub OIDC provider.
+create_oidc_provider = true
