@@ -322,3 +322,154 @@ def test_a_ppt_file_is_rejected_politely_when_libreoffice_is_missing(folders, mo
     assert was_successful is False
     assert ".ppt" in message
     assert len(steps) > 0
+
+
+# --- title detection and reading order ---------------------------------------
+
+
+def build_slide(names):
+    """A blank slide holding plain text boxes, in the order given."""
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    for name in names:
+        box = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(2), Inches(1))
+        box.name = name
+
+    return slide
+
+
+def names_in_order(slide):
+    return [shape.name for shape in slide.shapes]
+
+
+def test_a_title_that_is_not_first_is_moved_to_the_front():
+    slide = build_slide(["Body 1", "Title 1"])
+
+    assert z_reorder.move_titles_to_front(slide) == 1
+    assert names_in_order(slide) == ["Title 1", "Body 1"]
+
+
+def test_two_titles_keep_their_relative_order():
+    # the old code re-read slide.shapes[0] on every pass while reordering, so the
+    # second title anchored against the first one after it had already moved and
+    # these came back as Title B, Title A
+    slide = build_slide(["Body 1", "Title A", "Title B"])
+
+    assert z_reorder.move_titles_to_front(slide) == 2
+    assert names_in_order(slide) == ["Title A", "Title B", "Body 1"]
+
+
+def test_a_title_already_at_the_front_is_left_alone():
+    slide = build_slide(["Title 1", "Body 1"])
+
+    assert z_reorder.move_titles_to_front(slide) == 0
+    assert names_in_order(slide) == ["Title 1", "Body 1"]
+
+
+def test_reordering_a_second_time_changes_nothing():
+    slide = build_slide(["Body 1", "Title 1"])
+
+    z_reorder.move_titles_to_front(slide)
+
+    assert z_reorder.move_titles_to_front(slide) == 0
+    assert names_in_order(slide) == ["Title 1", "Body 1"]
+
+
+def test_a_lowercase_title_name_is_still_a_title():
+    slide = build_slide(["Body 1", "title 1"])
+
+    assert z_reorder.move_titles_to_front(slide) == 1
+    assert names_in_order(slide) == ["title 1", "Body 1"]
+
+
+def test_a_subtitle_is_not_treated_as_a_title():
+    slide = build_slide(["Body 1", "Subtitle 2"])
+
+    assert z_reorder.move_titles_to_front(slide) == 0
+    assert names_in_order(slide) == ["Body 1", "Subtitle 2"]
+
+
+def test_a_slide_with_no_title_is_left_alone():
+    slide = build_slide(["Body 1", "Body 2"])
+
+    assert z_reorder.move_titles_to_front(slide) == 0
+    assert names_in_order(slide) == ["Body 1", "Body 2"]
+
+
+def test_a_real_title_placeholder_is_found_even_when_renamed():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    title = slide.shapes.title
+    title.name = "Header"
+
+    assert z_reorder.is_title(title)
+
+
+# --- alt text that is not really alt text ------------------------------------
+
+
+@pytest.mark.parametrize("alt_text", [
+    "diagram.png",
+    "Screenshot 2024.PNG",
+    "chart.jpeg",
+    " figure.svg ",
+])
+def test_filename_style_alt_text_is_not_a_description(alt_text):
+    assert z_reorder.is_placeholder_alt_text(alt_text, "Picture 3")
+
+
+def test_alt_text_that_only_repeats_the_shape_name_is_not_a_description():
+    assert z_reorder.is_placeholder_alt_text("Picture 3", "Picture 3")
+
+
+@pytest.mark.parametrize("alt_text", [
+    "A bar chart of enrolment by year",
+    "",
+    None,
+])
+def test_a_real_description_is_left_alone(alt_text):
+    assert not z_reorder.is_placeholder_alt_text(alt_text, "Picture 3")
+
+
+def set_alt_text_on_every_picture(prs, alt_text):
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if z_reorder.is_picture(shape):
+                z_reorder.set_picture_alt_text(shape, alt_text)
+
+
+def test_a_picture_whose_alt_text_is_a_filename_still_needs_a_caption():
+    prs = Presentation(os.path.join(FIXTURE_FOLDER, "issue_missing_alt_text.pptx"))
+    set_alt_text_on_every_picture(prs, "diagram.png")
+
+    assert z_reorder.count_images_needing_captions(prs) == 1
+
+
+def test_a_picture_with_a_real_description_does_not_need_a_caption():
+    prs = Presentation(os.path.join(FIXTURE_FOLDER, "issue_missing_alt_text.pptx"))
+    set_alt_text_on_every_picture(prs, "A blue square on a white background")
+
+    assert z_reorder.count_images_needing_captions(prs) == 0
+
+
+# --- shape types python-pptx cannot resolve ----------------------------------
+
+
+def test_a_text_box_is_not_a_picture():
+    slide = build_slide(["Body 1"])
+
+    assert not z_reorder.is_picture(slide.shapes[0])
+
+
+def test_an_unresolvable_shape_type_does_not_raise():
+    class Unresolvable:
+        name = "Odd 1"
+
+        @property
+        def shape_type(self):
+            raise NotImplementedError
+
+    assert z_reorder.get_shape_type(Unresolvable()) is None
+    assert not z_reorder.is_picture(Unresolvable())
+    assert not z_reorder.needs_caption(Unresolvable())
