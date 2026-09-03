@@ -1,0 +1,4 @@
+# Everything needed to run the tests. Install this one when working on the code.
+-r requirements-web.txt
+
+pytest
