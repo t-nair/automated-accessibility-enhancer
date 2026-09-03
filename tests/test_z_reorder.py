@@ -431,6 +431,11 @@ def test_alt_text_repeating_an_auto_generated_shape_name_is_not_a_description(na
     assert z_reorder.is_placeholder_alt_text(name, name)
 
 
+@pytest.mark.parametrize("name", ["(Picture 3", "Picture 3)"])
+def test_an_unbalanced_parenthesis_is_not_an_auto_generated_name(name):
+    assert not z_reorder.is_placeholder_alt_text(name, name)
+
+
 @pytest.mark.parametrize("name", [
     "Water cycle diagram",
     "Free body diagram of the beam",

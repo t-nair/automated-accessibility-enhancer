@@ -43,8 +43,9 @@ IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff",
 # Alt text that only repeats a name like this says nothing, but alt text that
 # repeats a name the author chose deliberately may well be a real description,
 # so only auto-generated names count as placeholder text.
-AUTO_SHAPE_NAME = re.compile(
-    r"^\(?(?:picture|image|graphic|picture placeholder|content placeholder)\s*\d+\)?$")
+# the parentheses have to balance: "(Picture 3" is not a name PowerPoint writes
+_AUTO_SHAPE_NAME = r"(?:picture|image|graphic|picture placeholder|content placeholder)\s*\d+"
+AUTO_SHAPE_NAME = re.compile(rf"^(?:{_AUTO_SHAPE_NAME}|\({_AUTO_SHAPE_NAME}\))$")
 
 # a real title placeholder is authoritative, the shape name is only a fallback
 TITLE_PLACEHOLDERS = (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
