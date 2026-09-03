@@ -29,7 +29,8 @@ Follow the sections in order. Steps 1–5 are the setup; Step 6 is your first re
 | **Operating system** | Windows 10/11, macOS, or Linux. All three work — commands are given for each. |
 | **Python** | 3.9 or newer. Verified working on 3.13.7. |
 | **Git** | Optional — you can download the code as a ZIP instead. |
-| **Disk space** | ~50 MB for the minimal install, or **~3 GB** if you install the full `requirements.txt` (it includes PyTorch). |
+| **Disk space** | ~50 MB. Descriptions come from Claude on Amazon Bedrock, so there is no model to download. |
+| **AWS account** | Only needed for image descriptions, with Bedrock model access enabled. Without it, reading order is still fixed and pictures get placeholder alt text. |
 | **Test files** | A few `.pptx` files. The script does not modify them in place, but working on copies is still good practice. |
 
 ---
@@ -145,17 +146,27 @@ You'll know it worked when your prompt is prefixed with `(.venv)`.
 
 Make sure `(.venv)` is showing in your prompt before running these.
 
-**Option A — minimal install (recommended to start).** The script only needs `python-pptx`. This takes seconds:
+There are three lists, so you install only what you need:
+
+| File | What it gets you |
+|---|---|
+| `requirements.txt` | The pipeline on its own: `python-pptx`, `Pillow`, and the Anthropic SDK. |
+| `requirements-web.txt` | The above, plus Flask for the website. |
+| `requirements-dev.txt` | The above, plus pytest. |
+
+To work on the code, install the last one:
 
 ```bash
-pip install python-pptx
+pip install -r requirements-dev.txt
 ```
 
-**Option B — full install from `requirements.txt`.** This also pulls in Pillow, PyTorch, and Transformers, which are staged for the planned image alt-text generation feature but are **not used by the current script**. It downloads roughly 2–3 GB and can take 10+ minutes:
+All three together are about 50 MB and take seconds.
 
-```bash
-pip install -r requirements.txt
-```
+**To get image descriptions**, you also need AWS credentials the SDK can find
+(`aws configure`, environment variables, or an SSO profile) and Bedrock model
+access turned on for the Claude model you want, under **Bedrock → Model access**
+in the AWS console. `BEDROCK_MODEL_ID` and `BEDROCK_REGION` override the
+defaults; see the README for what they accept.
 
 **Verify the install:**
 

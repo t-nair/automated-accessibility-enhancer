@@ -31,7 +31,7 @@ git clone https://github.com/<your-username>/automated-accessibility-enhancer.gi
 cd automated-accessibility-enhancer
 python -m venv .venv
 source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 Then run it against a directory of decks:
