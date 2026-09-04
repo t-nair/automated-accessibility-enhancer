@@ -3,6 +3,7 @@ const dropZone = document.getElementById("drop-zone");
 const fileInput = document.getElementById("presentation");
 const chosenCount = document.getElementById("chosen-count");
 const fileList = document.getElementById("file-list");
+const submitButton = document.getElementById("submit-button");
 
 
 function formatSize(bytes) {
@@ -86,6 +87,7 @@ function makeFileRow(file, index) {
 
 function showChosenFiles() {
     fileList.textContent = "";
+    submitButton.disabled = (fileInput.files.length === 0);
 
     if (fileInput.files.length === 0) {
         chosenCount.textContent = "No files chosen yet.";
@@ -129,19 +131,46 @@ if (dropZone) {
     });
 
     fileInput.addEventListener("change", showChosenFiles);
+    showChosenFiles();
 }
 
 
-const deleteForms = document.querySelectorAll(".delete-form");
+const deleteForm = document.querySelector(".delete-form");
+const confirmBox = document.getElementById("confirm-delete");
 
-// deleting cannot be undone, so check first
-for (let i = 0; i < deleteForms.length; i++) {
-    deleteForms[i].addEventListener("submit", function (event) {
-        const sure = confirm("Delete this submission and its files? This cannot be undone.");
+// deleting cannot be undone, so ask first. Without JavaScript the form just submits,
+// which is why the question lives in here rather than on the page itself.
+if (deleteForm && confirmBox) {
+    const cancelButton = document.getElementById("confirm-cancel");
+    const reallyDeleteButton = document.getElementById("confirm-delete-button");
 
-        if (!sure) {
-            event.preventDefault();
-        }
+    deleteForm.addEventListener("submit", function (event) {
+        event.preventDefault();
+        confirmBox.showModal();
+    });
+
+    cancelButton.addEventListener("click", function () {
+        confirmBox.close();
+    });
+
+    reallyDeleteButton.addEventListener("click", function () {
+        confirmBox.close();
+        // submit() skips the listener above, so this does not reopen the box
+        deleteForm.submit();
+    });
+}
+
+
+const retryForm = document.getElementById("retry-form");
+
+// a retry that fails quickly reloads a page that looks unchanged, so the button
+// itself has to show that the press did something
+if (retryForm) {
+    const retryButton = document.getElementById("retry-button");
+
+    retryForm.addEventListener("submit", function () {
+        retryButton.disabled = true;
+        retryButton.textContent = "Trying again...";
     });
 }
 
@@ -232,9 +261,7 @@ if (slideViewer) {
             panels[i].hidden = (i !== index);
         }
 
-        const panel = panels[index];
-        counter.textContent = "Slide " + panel.getAttribute("data-slide") +
-            " of " + panels.length + " - " + panel.getAttribute("data-note");
+        counter.textContent = "Slide " + panels[index].getAttribute("data-slide");
 
         previousButton.disabled = (index === 0);
         nextButton.disabled = (index === panels.length - 1);
@@ -336,6 +363,10 @@ if (uploadForm) {
         if (wrongTypeNames.length > 0) {
             event.preventDefault();
             alert("Only .pptx and .ppt files are accepted. Please remove: " + wrongTypeNames.join(", "));
+            return;
         }
+
+        submitButton.disabled = true;
+        submitButton.textContent = "Sending files...";
     });
 }

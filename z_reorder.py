@@ -513,27 +513,49 @@ def find_offslide_shapes(slide, slide_width, slide_height):
     return found
 
 
-# shapes are read out in the order they were added, which is not always the order they
-# are laid out in. Half an inch of slack stops side by side shapes being reported.
-def reading_order_looks_wrong(slide):
-    positions = []
+def shapes_with_a_position(slide):
+    found = []
 
-    for index, shape in enumerate(slide.shapes):
-        if shape.top is None or shape.left is None:
+    for shape in slide.shapes:
+        if shape.top is None or shape.left is None or shape.width is None or shape.height is None:
             continue
 
-        if shape.has_text_frame and shape.text.strip():
-            positions.append((index, shape.top, shape.left))
-        elif shape.shape_type == 13:
-            positions.append((index, shape.top, shape.left))
+        if shape.shape_type == 13 or (shape.has_text_frame and shape.text.strip()):
+            found.append(shape)
 
-    if len(positions) < 2:
-        return False
+    return found
 
+
+# shapes are read out in the order they sit in the file, which is not always the order
+# they are laid out in. We only report a pair we can actually defend: one shape read
+# after another that it sits clearly above, or clearly to the left of. Two shapes in
+# separate columns are left alone, because reading one column and then the other is a
+# normal way to lay a slide out and we would only be guessing.
+def find_reading_order_problem(slide):
+    shapes = shapes_with_a_position(slide)
     slack = 457200  # half an inch in the units python-pptx uses
-    by_position = sorted(positions, key=lambda item: (item[1] // slack, item[2]))
 
-    return [item[0] for item in by_position] != [item[0] for item in positions]
+    for later in range(1, len(shapes)):
+        for earlier in range(later):
+            first = shapes[earlier]
+            second = shapes[later]
+
+            shares_a_column = (
+                second.left < first.left + first.width
+                and first.left < second.left + second.width
+            )
+            shares_a_row = (
+                second.top < first.top + first.height
+                and first.top < second.top + second.height
+            )
+
+            if shares_a_column and second.top + second.height <= first.top - slack:
+                return f"{second.name} is read after {first.name}, but it sits above it on the slide."
+
+            if shares_a_row and second.left + second.width <= first.left - slack:
+                return f"{second.name} is read after {first.name}, but it sits to the left of it."
+
+    return None
 
 
 def find_table_cell_problems(slide):
@@ -617,11 +639,13 @@ def find_slide_problems(slide, slide_number, title, seen_titles, slide_width=Non
                 "detail": f"{shape_name} sits outside the slide, so nobody sees it but a screen reader still reads it.",
             })
 
-    if reading_order_looks_wrong(slide):
+    order_problem = find_reading_order_problem(slide)
+
+    if order_problem is not None:
         problems.append({
             "slide": slide_number,
             "kind": "reading order",
-            "detail": "Things on this slide are read out in a different order from the way they are laid out.",
+            "detail": order_problem,
         })
 
     if slide_has_notes(slide):
@@ -702,6 +726,21 @@ def count_images_needing_captions(prs):
 
 
 # fixes the reading order and returns one record per shape, which becomes the report
+# a screen reader reads the shapes in the order they sit in the file, so moving the
+# title to the front is what makes it get announced first
+def move_titles_to_front(slide):
+    titles = []
+
+    for shape in slide.shapes:
+        if "Title" in shape.name:
+            titles.append(shape)
+
+    # backwards, because each one is put in front of the one moved before it
+    for shape in reversed(titles):
+        first_element = slide.shapes[0]._element
+        first_element.addprevious(shape._element)
+
+
 def fix_titles_and_describe_shapes(prs, filename, progress_callback=None):
     total_to_caption = count_images_needing_captions(prs)
     captions_done = 0
@@ -724,6 +763,10 @@ def fix_titles_and_describe_shapes(prs, filename, progress_callback=None):
             })
             continue
 
+        # the whole point of this tool is to put the title first, so do that before
+        # checking the order, otherwise we report a problem we are about to fix
+        move_titles_to_front(slide)
+
         title = get_slide_title(slide)
         problems.extend(find_slide_problems(
             slide, slide_number, title, seen_titles, prs.slide_width, prs.slide_height
@@ -736,10 +779,6 @@ def fix_titles_and_describe_shapes(prs, filename, progress_callback=None):
         all_words.append(get_all_slide_text(slide))
 
         for shape in slide.shapes:
-            if "Title" in shape.name:
-                cursor_sp = slide.shapes[0]._element
-                cursor_sp.addprevious(shape._element)
-
             needed_caption = shape.shape_type == 13 and not get_picture_alt_text(shape)
 
             records.append(describe_shape(shape, slide_number, slide_text))

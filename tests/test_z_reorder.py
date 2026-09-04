@@ -251,11 +251,16 @@ def test_a_shape_only_just_over_the_edge_is_left_alone():
 def test_shapes_added_out_of_order_are_spotted():
     prs, slide = make_slide_with_shapes()
     lower = slide.shapes.add_textbox(Inches(1), Inches(5), Inches(4), Inches(1))
+    lower.name = "Lower"
     lower.text_frame.text = "this is lower down but was added first"
     upper = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1))
+    upper.name = "Upper"
     upper.text_frame.text = "this is at the top but was added second"
 
-    assert z_reorder.reading_order_looks_wrong(slide) is True
+    problem = z_reorder.find_reading_order_problem(slide)
+
+    assert problem is not None
+    assert "Upper is read after Lower" in problem
 
 
 def test_shapes_added_in_order_are_left_alone():
@@ -265,7 +270,49 @@ def test_shapes_added_in_order_are_left_alone():
     lower = slide.shapes.add_textbox(Inches(1), Inches(5), Inches(4), Inches(1))
     lower.text_frame.text = "further down, added second"
 
-    assert z_reorder.reading_order_looks_wrong(slide) is False
+    assert z_reorder.find_reading_order_problem(slide) is None
+
+
+def test_two_columns_read_one_after_the_other_are_left_alone():
+    prs, slide = make_slide_with_shapes()
+    # reading all the way down one column and then the other is a normal layout,
+    # so we must not call it a problem
+    for left in (Inches(0.5), Inches(5.5)):
+        for top in (Inches(1), Inches(3)):
+            box = slide.shapes.add_textbox(left, top, Inches(4), Inches(1))
+            box.text_frame.text = "some words"
+
+    assert z_reorder.find_reading_order_problem(slide) is None
+
+
+def test_a_shape_read_before_the_one_to_its_left_is_spotted():
+    prs, slide = make_slide_with_shapes()
+    right = slide.shapes.add_textbox(Inches(5.5), Inches(2), Inches(4), Inches(1))
+    right.name = "Right"
+    right.text_frame.text = "added first but sits on the right"
+    left = slide.shapes.add_textbox(Inches(0.5), Inches(2), Inches(4), Inches(1))
+    left.name = "Left"
+    left.text_frame.text = "added second but sits on the left"
+
+    problem = z_reorder.find_reading_order_problem(slide)
+
+    assert problem is not None
+    assert "to the left of it" in problem
+
+
+def test_a_title_added_last_is_moved_and_not_reported():
+    prs, slide = make_slide_with_shapes()
+    body = slide.shapes.add_textbox(Inches(1), Inches(3), Inches(6), Inches(1))
+    body.name = "Body 1"
+    body.text_frame.text = "the body was added first"
+    title = slide.shapes.add_textbox(Inches(1), Inches(0.5), Inches(6), Inches(1))
+    title.name = "Title 1"
+    title.text_frame.text = "The Title"
+
+    z_reorder.move_titles_to_front(slide)
+
+    assert slide.shapes[0].name == "Title 1"
+    assert z_reorder.find_reading_order_problem(slide) is None
 
 
 def test_a_slide_with_speaker_notes_is_spotted():

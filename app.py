@@ -528,10 +528,13 @@ def read_report(report_text):
     described = 0
     already_had = 0
     no_description = 0
+    words = 0
+    busiest_slide = None
+    busiest_words = 0
 
     def slide_entry(number):
         if number not in slides_by_number:
-            slides_by_number[number] = {"number": number, "shapes": [], "problems": [], "images": 0, "added": 0}
+            slides_by_number[number] = {"number": number, "shapes": [], "problems": [], "images": 0, "added": 0, "words": 0}
             slides.append(slides_by_number[number])
 
         return slides_by_number[number]
@@ -553,6 +556,9 @@ def read_report(report_text):
         elif shape["kind"] == "other":
             no_description += 1
 
+        if shape["kind"] == "text" and shape["description"]:
+            slides_by_number[number]["words"] += len(shape["description"].split())
+
     # problems are things a person has to fix, so they are listed against their slide
     # and counted separately from the descriptions we wrote
     problems = report.get("problems", [])
@@ -562,6 +568,20 @@ def read_report(report_text):
 
     slides.sort(key=lambda slide: slide["number"])
 
+    # the busiest slide is worth pointing at, because a wall of text is hard to
+    # follow whether you are listening to it or reading it
+    for slide in slides:
+        words += slide["words"]
+
+        if slide["words"] > busiest_words:
+            busiest_words = slide["words"]
+            busiest_slide = slide["number"]
+
+    words_per_slide = 0
+
+    if slides:
+        words_per_slide = round(words / len(slides))
+
     totals = {
         "slides": len(slides),
         "shapes": len(report.get("shapes", [])),
@@ -570,6 +590,10 @@ def read_report(report_text):
         "no_description": no_description,
         "problems": len(problems),
         "reading_level": report.get("reading_level"),
+        "words": words,
+        "words_per_slide": words_per_slide,
+        "busiest_slide": busiest_slide,
+        "busiest_words": busiest_words,
     }
 
     return slides, totals

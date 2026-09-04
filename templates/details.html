@@ -44,6 +44,20 @@
             {% endif %}
         </div>
 
+        {% if submission.status != "queued" and submission.status != "processing" %}
+            <dialog id="confirm-delete" class="confirm-box">
+                <h3>Delete this submission?</h3>
+                <p>
+                    This removes {{ submission.original_filename }}, the file we made from it
+                    and its report. It cannot be undone.
+                </p>
+                <div class="confirm-buttons">
+                    <button type="button" id="confirm-cancel" class="cancel-button">Keep it</button>
+                    <button type="button" id="confirm-delete-button" class="delete-button">Delete</button>
+                </div>
+            </dialog>
+        {% endif %}
+
         <p>
             Submitted: {{ submission.submitted_at }}<br>
             Status:
@@ -85,8 +99,8 @@
                 {% endif %}
 
                 <p>You can safely try again below. We keep the original upload for this purpose.</p>
-                <form action="{{ url_for('retry_submission', submission_id=submission.id) }}" method="POST">
-                    <button type="submit">Try again</button>
+                <form action="{{ url_for('retry_submission', submission_id=submission.id) }}" method="POST" id="retry-form">
+                    <button type="submit" id="retry-button">Try again</button>
                 </form>
             </div>
         {% endif %}
@@ -103,17 +117,13 @@
             {% if slides %}
                 <p>This is what a screen reader will announce on each slide. Please check the descriptions we wrote before sharing the file.</p>
 
-                <ul class="report-totals">
-                    <li><strong>{{ totals.slides }}</strong> slides, <strong>{{ totals.shapes }}</strong> shapes</li>
-                    <li><strong>{{ totals.described }}</strong> images we described</li>
-                    <li><strong>{{ totals.already_had }}</strong> images that already had a description</li>
-                    <li><strong>{{ totals.no_description }}</strong> shapes with nothing to announce</li>
-                    <li><strong>{{ totals.problems }}</strong> things for you to fix</li>
-                </ul>
-
                 <div class="tab-bar" id="tab-bar" role="tablist" hidden>
+                    <button type="button" class="tab-button" id="tab-overview"
+                            role="tab" aria-controls="panel-overview" aria-selected="true">
+                        Overview
+                    </button>
                     <button type="button" class="tab-button" id="tab-slides"
-                            role="tab" aria-controls="slide-viewer" aria-selected="true">
+                            role="tab" aria-controls="slide-viewer" aria-selected="false">
                         Slide by slide
                     </button>
                     <button type="button" class="tab-button" id="tab-checks"
@@ -122,19 +132,45 @@
                     </button>
                 </div>
 
+                <section class="tab-panel" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
+                    <h4>Overview</h4>
+
+                    <ul class="stat-grid">
+                        <li class="stat">
+                            <span class="stat-number">{{ totals.slides }}</span>
+                            <span class="stat-label">slides</span>
+                        </li>
+                        <li class="stat">
+                            <span class="stat-number">{{ totals.described }}</span>
+                            <span class="stat-label">images we described</span>
+                        </li>
+                        <li class="stat">
+                            <span class="stat-number">{{ totals.already_had }}</span>
+                            <span class="stat-label">images that already had a description</span>
+                        </li>
+                        <li class="stat">
+                            <span class="stat-number">{{ totals.words_per_slide }}</span>
+                            <span class="stat-label">words per slide on average</span>
+                        </li>
+                        {% if totals.busiest_slide %}
+                            <li class="stat">
+                                <span class="stat-number">{{ totals.busiest_words }}</span>
+                                <span class="stat-label">words on slide {{ totals.busiest_slide }}, the busiest one</span>
+                            </li>
+                        {% endif %}
+                        {% if totals.reading_level %}
+                            <li class="stat">
+                                <span class="stat-number">{{ totals.reading_level }}</span>
+                                <span class="stat-label">school grade the writing reads at</span>
+                            </li>
+                        {% endif %}
+                    </ul>
+                </section>
+
                 <section class="tab-panel" id="panel-checks" role="tabpanel" aria-labelledby="tab-checks">
                     <h4>Things to fix</h4>
 
-                    {% if totals.reading_level %}
-                        <p class="reading-level">
-                            The words on these slides read at about a
-                            <strong>grade {{ totals.reading_level }}</strong> level.
-                        </p>
-                    {% endif %}
-
                     {% if totals.problems %}
-                        <p>We do not change any of these ourselves, because only you know what the right wording is.</p>
-
                         <ul class="problem-list">
                             {% for slide in slides %}
                                 {% for problem in slide.problems %}
@@ -162,30 +198,24 @@
                     </div>
 
                     {% for slide in slides %}
-                        <section class="slide-panel"
-                                 data-slide="{{ slide.number }}"
-                                 data-note="{{ slide.shapes|length }} shapes{% if slide.added %}, {{ slide.added }} described by us{% endif %}">
+                        <section class="slide-panel" data-slide="{{ slide.number }}">
 
-                            <h4 class="slide-heading">
-                                Slide {{ slide.number }}
-                                <span class="slide-note">
-                                    {{ slide.shapes|length }} shapes{% if slide.added %}, {{ slide.added }} described by us{% endif %}
-                                </span>
-                            </h4>
+                            <h4 class="slide-heading">Slide {{ slide.number }}</h4>
 
                             <ul class="shape-list">
                                 {% for shape in slide.shapes %}
                                     <li class="shape-item">
-                                        <span class="shape-kind shape-kind-{{ shape.kind }}">{{ shape.kind }}</span>
+                                        {% if shape.we_added_it %}
+                                            <span class="shape-kind shape-kind-generated">gen alt-text</span>
+                                        {% else %}
+                                            <span class="shape-kind shape-kind-{{ shape.kind }}">{{ shape.kind }}</span>
+                                        {% endif %}
                                         <span class="shape-body">
                                             <span class="shape-name">{{ shape.name }}</span>
                                             {% if shape.description %}
                                                 <span class="shape-text">{{ shape.description }}</span>
                                             {% else %}
                                                 <span class="shape-text shape-text-empty">Nothing for a screen reader to announce.</span>
-                                            {% endif %}
-                                            {% if shape.we_added_it %}
-                                                <span class="shape-added">We wrote this description</span>
                                             {% endif %}
                                         </span>
                                     </li>

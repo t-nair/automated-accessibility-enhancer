@@ -55,6 +55,7 @@ footer {
     background: #1c3d5a;
     color: white;
     padding: 10px;
+    border-radius: 0 0 6px 6px;
 }
 
 .skip-link:focus {
@@ -85,10 +86,18 @@ button {
     font-size: 1em;
     cursor: pointer;
     margin-top: 15px;
+    border-radius: 6px;
 }
 
 button:hover {
     background-color: #14293d;
+}
+
+/* this has to come after the hover rule above, otherwise hovering a button
+   that cannot be pressed would still darken it */
+button:disabled {
+    background-color: #b6c2cd;
+    cursor: default;
 }
 
 button:focus {
@@ -99,6 +108,7 @@ button:focus {
 .drop-zone {
     display: block;
     border: 2px dashed #7d97ad;
+    border-radius: 8px;
     background-color: #f7f9fb;
     padding: 40px 20px;
     margin-top: 15px;
@@ -163,6 +173,7 @@ button:focus {
 
 .file-row {
     display: flex;
+    border-radius: 6px;
     align-items: center;
     gap: 12px;
     border: 1px solid #ccc;
@@ -173,6 +184,7 @@ button:focus {
 
 .file-icon {
     background-color: #1c3d5a;
+    border-radius: 4px;
     color: white;
     font-size: 0.7em;
     font-weight: bold;
@@ -201,6 +213,7 @@ button:focus {
 
 .file-remove {
     background-color: transparent;
+    border-radius: 4px;
     color: #8c2f2b;
     font-size: 1.5em;
     line-height: 1;
@@ -214,6 +227,7 @@ button:focus {
 
 .flash-message {
     background-color: #fff3cd;
+    border-radius: 6px;
     border: 1px solid #d9a441;
     padding: 10px 15px;
     margin-bottom: 20px;
@@ -233,7 +247,7 @@ th, td {
 
 .status-badge {
     padding: 3px 8px;
-    border-radius: 3px;
+    border-radius: 10px;
     font-size: 0.9em;
 }
 
@@ -272,6 +286,7 @@ th, td {
 
 .progress-box {
     background-color: #f7f9fb;
+    border-radius: 8px;
     border: 1px solid #7d97ad;
     padding: 15px 20px;
     margin: 15px 0;
@@ -291,12 +306,15 @@ th, td {
 progress {
     flex: 1;
     height: 22px;
+    border-radius: 11px;
+    overflow: hidden;
     /* modern browsers colour the bar with accent-color instead of the older rules below */
     accent-color: #1c3d5a;
 }
 
 progress::-webkit-progress-bar {
     background-color: #e3e9ef;
+    border-radius: 11px;
 }
 
 progress::-webkit-progress-value {
@@ -321,6 +339,7 @@ progress::-moz-progress-bar {
 
 .delete-button {
     background-color: #8c2f2b;
+    border-radius: 6px;
     padding: 8px 15px;
     margin-top: 0;
     font-size: 0.95em;
@@ -340,6 +359,7 @@ progress::-moz-progress-bar {
 
 .error-box {
     background-color: #f2dede;
+    border-radius: 8px;
     border: 1px solid #a94442;
     color: #a94442;
     padding: 10px 15px;
@@ -357,6 +377,7 @@ progress::-moz-progress-bar {
 
 .download-link {
     display: inline-block;
+    border-radius: 6px;
     background-color: #1c3d5a;
     color: white;
     text-decoration: none;
@@ -373,18 +394,6 @@ progress::-moz-progress-bar {
     outline-offset: 2px;
 }
 
-.report-totals {
-    list-style: none;
-    padding: 12px 15px;
-    margin: 15px 0;
-    background-color: #f7f9fb;
-    border: 1px solid #7d97ad;
-}
-
-.report-totals li {
-    margin-bottom: 4px;
-}
-
 .slide-nav {
     display: flex;
     align-items: center;
@@ -398,11 +407,6 @@ progress::-moz-progress-bar {
     font-size: 0.95em;
 }
 
-.slide-nav button:disabled {
-    background-color: #b6c2cd;
-    cursor: default;
-}
-
 .slide-counter {
     flex: 1;
     text-align: center;
@@ -413,6 +417,7 @@ progress::-moz-progress-bar {
 
 .slide-panel {
     border: 1px solid #ccc;
+    border-radius: 8px;
     padding: 12px 15px;
     margin-bottom: 8px;
 }
@@ -420,11 +425,6 @@ progress::-moz-progress-bar {
 .slide-heading {
     margin: 0 0 5px 0;
     color: #1c3d5a;
-}
-
-.slide-note {
-    font-weight: normal;
-    color: #555;
 }
 
 .tab-bar {
@@ -436,6 +436,7 @@ progress::-moz-progress-bar {
 
 .tab-button {
     background-color: #eef1f4;
+    border-radius: 6px 6px 0 0;
     color: #1c3d5a;
     margin-top: 0;
     padding: 10px 16px;
@@ -451,14 +452,44 @@ progress::-moz-progress-bar {
     color: white;
 }
 
+/* :hover on its own beats the class above, which would leave white text
+   on a pale background while the pointer is over the chosen tab */
+.tab-button-chosen:hover {
+    background-color: #14293d;
+}
+
 .tab-panel {
     padding-top: 12px;
 }
 
-.reading-level {
+.stat-grid {
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 0;
+    margin: 0;
+}
+
+.stat {
+    flex: 1 1 150px;
     background-color: #f7f9fb;
     border: 1px solid #7d97ad;
-    padding: 10px 15px;
+    border-radius: 8px;
+    padding: 12px 15px;
+}
+
+.stat-number {
+    display: block;
+    font-size: 1.8em;
+    font-weight: bold;
+    color: #1c3d5a;
+}
+
+.stat-label {
+    display: block;
+    font-size: 0.9em;
+    color: #555;
 }
 
 .problem-where {
@@ -474,6 +505,9 @@ progress::-moz-progress-bar {
 
 .problem-list {
     list-style: none;
+    border: 1px solid #7d97ad;
+    border-radius: 8px;
+    background-color: #f7f9fb;
     padding: 0;
     margin: 0 0 10px 0;
 }
@@ -482,17 +516,20 @@ progress::-moz-progress-bar {
     display: flex;
     gap: 10px;
     align-items: flex-start;
-    background-color: #fdf3f2;
-    border-left: 4px solid #8c2f2b;
-    padding: 8px 10px;
-    margin-bottom: 6px;
+    border-top: 1px solid #dbe3ea;
+    padding: 10px 14px;
+}
+
+.problem-item:first-child {
+    border-top: none;
 }
 
 .problem-kind {
     font-size: 0.7em;
+    border-radius: 4px;
     text-transform: uppercase;
     letter-spacing: 1px;
-    background-color: #8c2f2b;
+    background-color: #1c3d5a;
     color: white;
     padding: 3px 6px;
     white-space: nowrap;
@@ -518,6 +555,7 @@ progress::-moz-progress-bar {
 
 .shape-kind {
     font-size: 0.7em;
+    border-radius: 4px;
     text-transform: uppercase;
     letter-spacing: 1px;
     padding: 3px 6px;
@@ -531,6 +569,12 @@ progress::-moz-progress-bar {
 .shape-kind-image {
     background-color: #1c3d5a;
     color: white;
+}
+
+.shape-kind-generated {
+    background-color: #3c763d;
+    color: white;
+    min-width: 78px;
 }
 
 .shape-body {
@@ -555,16 +599,40 @@ progress::-moz-progress-bar {
     font-style: italic;
 }
 
-.shape-added {
-    display: inline-block;
-    margin-top: 4px;
-    font-size: 0.8em;
-    color: #3c763d;
-}
-
 .report-text {
     white-space: pre-wrap;
+    border-radius: 6px;
     background-color: #f7f7f7;
     border: 1px solid #ccc;
     padding: 10px;
+}
+.confirm-box {
+    max-width: 420px;
+    border: 1px solid #7d97ad;
+    border-radius: 8px;
+    padding: 20px 25px;
+    color: #222;
+}
+
+.confirm-box::backdrop {
+    background-color: rgba(0, 0, 0, 0.45);
+}
+
+.confirm-box h3 {
+    margin-top: 0;
+}
+
+.confirm-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.cancel-button {
+    background-color: #eef1f4;
+    color: #1c3d5a;
+}
+
+.cancel-button:hover {
+    background-color: #dfe5ea;
 }

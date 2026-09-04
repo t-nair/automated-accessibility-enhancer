@@ -154,6 +154,96 @@ def make_issue_checks_sampler():
     save_presentation(prs, "issue_checks_sampler.pptx")
 
 
+def make_issue_every_check():
+    prs = Presentation()
+
+    # slide 1: enough writing for the reading level to be worked out
+    intro = prs.slides.add_slide(prs.slide_layouts[5])
+    intro.shapes.title.text = "Every Check On Its Own Slide"
+    intro_box = intro.shapes.add_textbox(Inches(1), Inches(2), Inches(8), Inches(2))
+    intro_box.name = "Body 1"
+    intro_box.text_frame.text = (
+        "Each slide after this one is built to set off exactly one of the checks. "
+        "The paragraph you are reading is only here so that there are enough words "
+        "in the deck for the reading level to be worked out, because the measurement "
+        "is skipped on presentations shorter than thirty words."
+    )
+
+    # slide 2: no title, because the only text shape is not named Title
+    untitled = prs.slides.add_slide(prs.slide_layouts[6])
+    untitled_box = untitled.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(1))
+    untitled_box.name = "Body 1"
+    untitled_box.text_frame.text = "There is no heading above this text."
+
+    # slides 3 and 4: the same title twice
+    first_results = prs.slides.add_slide(prs.slide_layouts[5])
+    first_results.shapes.title.text = "Results"
+
+    second_results = prs.slides.add_slide(prs.slide_layouts[5])
+    second_results.shapes.title.text = "Results"
+
+    # slide 5: a link whose words do not say where it goes
+    link_slide = prs.slides.add_slide(prs.slide_layouts[5])
+    link_slide.shapes.title.text = "Further Reading"
+    link_box = link_slide.shapes.add_textbox(Inches(1), Inches(2), Inches(6), Inches(1))
+    link_run = link_box.text_frame.paragraphs[0].add_run()
+    link_run.text = "click here"
+    link_run.hyperlink.address = "https://example.com/syllabus"
+
+    # slide 6: a table with no header row, every cell filled so nothing else is flagged
+    header_slide = prs.slides.add_slide(prs.slide_layouts[5])
+    header_slide.shapes.title.text = "Marks By Term"
+    header_table = header_slide.shapes.add_table(3, 2, Inches(1), Inches(2), Inches(6), Inches(2)).table
+    header_table.first_row = False
+    filled_rows = [["Autumn", "72"], ["Winter", "78"], ["Spring", "81"]]
+    for row_number in range(3):
+        for column_number in range(2):
+            header_table.cell(row_number, column_number).text = filled_rows[row_number][column_number]
+
+    # slide 7: a table with a merged cell and an empty cell
+    cells_slide = prs.slides.add_slide(prs.slide_layouts[5])
+    cells_slide.shapes.title.text = "Timetable"
+    cells_table = cells_slide.shapes.add_table(3, 3, Inches(1), Inches(2), Inches(7), Inches(2)).table
+    cells_table.cell(0, 0).text = "Day"
+    cells_table.cell(0, 1).text = "Morning"
+    cells_table.cell(0, 2).text = "Afternoon"
+    cells_table.cell(1, 0).text = "Monday"
+    cells_table.cell(1, 1).merge(cells_table.cell(1, 2))
+    cells_table.cell(1, 1).text = "Lab session, runs all day"
+    cells_table.cell(2, 0).text = "Tuesday"
+    cells_table.cell(2, 1).text = "Lecture"
+    # cell (2, 2) is left empty on purpose
+
+    # slide 8: a shape parked past the right hand edge of the slide
+    offslide = prs.slides.add_slide(prs.slide_layouts[5])
+    offslide.shapes.title.text = "Notes To Myself"
+    parked = offslide.shapes.add_textbox(Inches(11), Inches(2), Inches(3), Inches(1))
+    parked.name = "Parked Note"
+    parked.text_frame.text = "Old draft I meant to delete"
+
+    # slide 9: the lower box was added first, so it is read before the one above it
+    order_slide = prs.slides.add_slide(prs.slide_layouts[5])
+    order_slide.shapes.title.text = "Method"
+    lower_box = order_slide.shapes.add_textbox(Inches(1), Inches(4), Inches(6), Inches(1))
+    lower_box.name = "Second Point"
+    lower_box.text_frame.text = "Then we measured the current."
+    upper_box = order_slide.shapes.add_textbox(Inches(1), Inches(2), Inches(6), Inches(1))
+    upper_box.name = "First Point"
+    upper_box.text_frame.text = "First we set up the circuit."
+
+    # slide 10: something important left in the speaker notes
+    notes_slide = prs.slides.add_slide(prs.slide_layouts[5])
+    notes_slide.shapes.title.text = "Summary"
+    notes_slide.notes_slide.notes_text_frame.text = (
+        "Remember to tell them the exam covers chapters four and five."
+    )
+
+    # slide 11: nothing on it at all
+    prs.slides.add_slide(prs.slide_layouts[6])
+
+    save_presentation(prs, "issue_every_check.pptx")
+
+
 def make_corrupt_empty_file():
     output_path = os.path.join(OUTPUT_FOLDER, "corrupt_empty_file.pptx")
     with open(output_path, "wb"):
@@ -210,6 +300,7 @@ if __name__ == "__main__":
     make_issue_multiple_images_no_alt_text()
     make_issue_all_issues_combined()
     make_issue_checks_sampler()
+    make_issue_every_check()
 
     make_corrupt_empty_file()
     make_corrupt_random_bytes()
