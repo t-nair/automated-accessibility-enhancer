@@ -462,6 +462,14 @@ progress::-moz-progress-bar {
     padding-top: 12px;
 }
 
+.reading-level {
+    background-color: #f7f9fb;
+    border: 1px solid #7d97ad;
+    border-radius: 6px;
+    padding: 10px 15px;
+    margin: 0 0 12px 0;
+}
+
 .stat-grid {
     list-style: none;
     display: flex;

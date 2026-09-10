@@ -120,7 +120,7 @@
                 <div class="tab-bar" id="tab-bar" role="tablist" hidden>
                     <button type="button" class="tab-button" id="tab-overview"
                             role="tab" aria-controls="panel-overview" aria-selected="true">
-                        Overview
+                        General overview
                     </button>
                     <button type="button" class="tab-button" id="tab-slides"
                             role="tab" aria-controls="slide-viewer" aria-selected="false">
@@ -133,7 +133,14 @@
                 </div>
 
                 <section class="tab-panel" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
-                    <h4>Overview</h4>
+                    <h4>General overview</h4>
+
+                    {% if totals.reading_level %}
+                        <p class="reading-level">
+                            The words on these slides read at about a
+                            <strong>grade {{ totals.reading_level }}</strong> level.
+                        </p>
+                    {% endif %}
 
                     <ul class="stat-grid">
                         <li class="stat">
@@ -156,12 +163,6 @@
                             <li class="stat">
                                 <span class="stat-number">{{ totals.busiest_words }}</span>
                                 <span class="stat-label">words on slide {{ totals.busiest_slide }}, the busiest one</span>
-                            </li>
-                        {% endif %}
-                        {% if totals.reading_level %}
-                            <li class="stat">
-                                <span class="stat-number">{{ totals.reading_level }}</span>
-                                <span class="stat-label">school grade the writing reads at</span>
                             </li>
                         {% endif %}
                     </ul>
