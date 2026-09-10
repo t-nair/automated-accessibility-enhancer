@@ -3,22 +3,27 @@ import json
 import time
 import uuid
 import queue
-import sqlite3
 import logging
 import threading
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
 from werkzeug.utils import secure_filename
 from z_reorder import process_one_file
 
+# Where submissions and their files are kept. On AWS that is S3 and DynamoDB, and
+# the pipeline runs in Lambda; on a laptop it is folders and a sqlite file, and the
+# pipeline runs in a thread here. SUBMISSIONS_TABLE is only set on AWS.
+if os.environ.get("SUBMISSIONS_TABLE"):
+    import storage_aws as storage
+else:
+    import storage_local as storage
+
+# on AWS the deck is processed by Lambda, which S3 starts on its own, so there is
+# no queue and no worker thread in the web server
+RUNS_PIPELINE_HERE = not os.environ.get("SUBMISSIONS_TABLE")
+
 app = Flask(__name__)
 
-UPLOAD_FOLDER = "uploads"
-PROCESSED_FOLDER = "processed"
-DATA_FOLDER = "data"
-DATABASE_FILE = "data/submissions.db"
-OLD_SUBMISSIONS_FILE = "data/submissions.json"
-SECRET_KEY_FILE = "data/secret_key.txt"
 ALLOWED_EXTENSIONS = (".pptx", ".ppt")
 MAX_FILE_SIZE_MB = 50
 
@@ -26,282 +31,25 @@ MAX_FILE_SIZE_MB = 50
 # one file. Anything past this is refused before it reaches the disk.
 MAX_REQUEST_SIZE_MB = 250
 
-# submissions and their files are thrown away after this long, so the disk does not
-# fill up on a server that is left running
-RETENTION_DAYS = 30
-SECONDS_IN_A_DAY = 24 * 60 * 60
 SECONDS_IN_A_DAY = 24 * 60 * 60
 
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_SIZE_MB * 1024 * 1024
 
-# these folders are not stored in git, so make sure they exist on a fresh copy
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(PROCESSED_FOLDER, exist_ok=True)
-os.makedirs(DATA_FOLDER, exist_ok=True)
+storage.setup()
 
-# how far along each file being processed right now is. This is only kept in memory,
-# because it is not worth saving to disk once the file is finished.
+# how far along each file being processed right now is. Only used when the pipeline
+# runs here, because it is not worth saving to disk once the file is finished. On AWS
+# the Lambda writes its progress to the table instead.
 processing_progress = {}
 
 # files wait here to be processed. One worker takes them one at a time, so several
-# uploads can never load the captioning model at once and run the GPU out of memory.
+# uploads can never load the pipeline at once.
 work_queue = queue.Queue()
 
-
-# the key that signs the cookie has to stay the same between restarts, or everyone
-# loses track of the files they submitted
-def get_secret_key():
-    from_environment = os.environ.get("SECRET_KEY")
-
-    if from_environment:
-        return from_environment
-
-    if os.path.exists(SECRET_KEY_FILE):
-        with open(SECRET_KEY_FILE, "r") as f:
-            return f.read().strip()
-
-    new_key = uuid.uuid4().hex + uuid.uuid4().hex
-
-    with open(SECRET_KEY_FILE, "w") as f:
-        f.write(new_key)
-
-    return new_key
-
-
-app.secret_key = get_secret_key()
+app.secret_key = storage.get_secret_key()
 app.permanent_session_lifetime = timedelta(days=30)
 
 
-def get_connection():
-    # a new connection each time, because the background worker runs on its own
-    # thread and sqlite connections cannot be shared between threads
-    connection = sqlite3.connect(DATABASE_FILE)
-    connection.row_factory = sqlite3.Row
-
-    return connection
-
-
-def setup_database():
-    connection = get_connection()
-    connection.execute("""
-        CREATE TABLE IF NOT EXISTS submissions (
-            id TEXT PRIMARY KEY,
-            owner_id TEXT,
-            original_filename TEXT,
-            saved_filename TEXT,
-            status TEXT,
-            alt_text_filename TEXT,
-            error_message TEXT,
-            error_steps TEXT,
-            retry_count INTEGER,
-            submitted_at TEXT
-        )
-    """)
-    connection.commit()
-    connection.close()
-
-
-# the pages expect a dictionary, and the steps are stored as one piece of text
-def row_to_submission(row):
-    submission = dict(row)
-
-    if submission["error_steps"]:
-        submission["error_steps"] = json.loads(submission["error_steps"])
-    else:
-        submission["error_steps"] = None
-
-    return submission
-
-
-def add_submission(submission):
-    connection = get_connection()
-    connection.execute("""
-        INSERT INTO submissions
-        (id, owner_id, original_filename, saved_filename, status,
-         alt_text_filename, error_message, error_steps, retry_count, submitted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        submission["id"],
-        submission["owner_id"],
-        submission["original_filename"],
-        submission["saved_filename"],
-        submission["status"],
-        submission["alt_text_filename"],
-        submission["error_message"],
-        json.dumps(submission["error_steps"]) if submission["error_steps"] else None,
-        submission["retry_count"],
-        submission["submitted_at"],
-    ))
-    connection.commit()
-    connection.close()
-
-
-def get_submission(submission_id):
-    connection = get_connection()
-    row = connection.execute("SELECT * FROM submissions WHERE id = ?", (submission_id,)).fetchone()
-    connection.close()
-
-    if row is None:
-        return None
-
-    return row_to_submission(row)
-
-
-def get_submissions_for_owner(owner_id):
-    connection = get_connection()
-    rows = connection.execute(
-        "SELECT * FROM submissions WHERE owner_id = ? ORDER BY submitted_at DESC, rowid DESC",
-        (owner_id,)
-    ).fetchall()
-    connection.close()
-
-    submissions = []
-
-    for row in rows:
-        submissions.append(row_to_submission(row))
-
-    return submissions
-
-
-def delete_submission(submission_id):
-    connection = get_connection()
-    connection.execute("DELETE FROM submissions WHERE id = ?", (submission_id,))
-    connection.commit()
-    connection.close()
-
-
-def delete_submission_files(submission):
-    saved_name = submission["saved_filename"]
-    name_without_extension = os.path.splitext(saved_name)[0]
-
-    paths = [
-        os.path.join(UPLOAD_FOLDER, saved_name),
-        os.path.join(PROCESSED_FOLDER, saved_name),
-        os.path.join(PROCESSED_FOLDER, name_without_extension + "_updated.pptx"),
-        os.path.join(PROCESSED_FOLDER, name_without_extension + "_alt_text"),
-    ]
-
-    for path in paths:
-        if not os.path.exists(path):
-            continue
-
-        try:
-            os.remove(path)
-        except OSError as e:
-            logging.warning(f"Could not delete {path}. Error: {e}")
-
-
-# changes is a dictionary of column names and their new values
-def update_submission(submission_id, changes):
-    if not changes:
-        return
-
-    if "error_steps" in changes:
-        steps = changes["error_steps"]
-        changes = dict(changes)
-        changes["error_steps"] = json.dumps(steps) if steps else None
-
-    assignments = []
-    values = []
-
-    for column, value in changes.items():
-        assignments.append(column + " = ?")
-        values.append(value)
-
-    values.append(submission_id)
-
-    connection = get_connection()
-    connection.execute("UPDATE submissions SET " + ", ".join(assignments) + " WHERE id = ?", values)
-    connection.commit()
-    connection.close()
-
-
-# the project used to keep submissions in a JSON file, so bring those across once
-def import_old_submissions():
-    if not os.path.exists(OLD_SUBMISSIONS_FILE):
-        return
-
-    connection = get_connection()
-    already_there = connection.execute("SELECT COUNT(*) FROM submissions").fetchone()[0]
-    connection.close()
-
-    if already_there > 0:
-        return
-
-    with open(OLD_SUBMISSIONS_FILE, "r") as f:
-        old_submissions = json.load(f)
-
-    for old in old_submissions:
-        add_submission({
-            "id": old["id"],
-            # these were submitted before there were separate visitors
-            "owner_id": None,
-            "original_filename": old.get("original_filename", ""),
-            "saved_filename": old.get("saved_filename", ""),
-            "status": old.get("status", "error"),
-            "alt_text_filename": old.get("alt_text_filename"),
-            "error_message": old.get("error_message"),
-            "error_steps": old.get("error_steps"),
-            "retry_count": old.get("retry_count", 0),
-            "submitted_at": old.get("submitted_at", ""),
-        })
-
-    logging.info(f"Copied {len(old_submissions)} older submission(s) from {OLD_SUBMISSIONS_FILE} into the database.")
-
-
-# the queue only lives in memory, so anything left mid-flight when the server stopped
-# will never be picked up again. Better to say so than leave it stuck forever.
-def recover_stuck_submissions():
-    connection = get_connection()
-    rows = connection.execute("SELECT id FROM submissions WHERE status = 'queued' OR status = 'processing'").fetchall()
-
-    if not rows:
-        connection.close()
-        return
-
-    steps = json.dumps(["Upload the presentation again."])
-    connection.execute("""
-        UPDATE submissions
-        SET status = 'error', error_message = ?, error_steps = ?
-        WHERE status = 'queued' OR status = 'processing'
-    """, ("The server restarted while this file was being worked on, so it never finished.", steps))
-    connection.commit()
-    connection.close()
-
-    logging.warning(f"Marked {len(rows)} submission(s) as failed because the server restarted while they were in progress.")
-
-
-def delete_old_submissions():
-    cutoff = datetime.now() - timedelta(days=RETENTION_DAYS)
-    connection = get_connection()
-    connection.row_factory = sqlite3.Row
-    rows = connection.execute("SELECT * FROM submissions").fetchall()
-    connection.close()
-
-    removed = 0
-
-    for row in rows:
-        submission = row_to_submission(row)
-
-        try:
-            submitted = datetime.strptime(submission["submitted_at"], "%Y-%m-%d %H:%M")
-        except ValueError:
-            continue
-
-        if submitted < cutoff:
-            delete_submission_files(submission)
-            delete_submission(submission["id"])
-            removed += 1
-
-    if removed:
-        logging.info(f"Deleted {removed} submission(s) older than {RETENTION_DAYS} days.")
-
-
-setup_database()
-import_old_submissions()
-recover_stuck_submissions()
-delete_old_submissions()
 
 
 # each browser gets a random id in a cookie, which is how one person's list of files
@@ -317,7 +65,7 @@ def get_owner_id():
 # returns nothing if the submission belongs to someone else, so the pages treat it
 # the same as one that does not exist
 def get_my_submission(submission_id):
-    submission = get_submission(submission_id)
+    submission = storage.get_submission(submission_id)
 
     if submission is None:
         return None
@@ -338,7 +86,7 @@ def file_is_too_big(file):
 
 
 def set_submission_status(submission_id, new_status):
-    update_submission(submission_id, {"status": new_status})
+    storage.update_submission(submission_id, {"status": new_status})
 
 
 def process_one_submission(submission_id, saved_name):
@@ -349,7 +97,7 @@ def process_one_submission(submission_id, saved_name):
     set_submission_status(submission_id, "processing")
 
     was_successful, error_message, error_steps = process_one_file(
-        saved_name, UPLOAD_FOLDER, PROCESSED_FOLDER, update_progress
+        saved_name, storage.UPLOAD_FOLDER, storage.PROCESSED_FOLDER, update_progress
     )
 
     if not was_successful:
@@ -360,7 +108,7 @@ def process_one_submission(submission_id, saved_name):
     else:
         alt_text_filename = None
 
-    update_submission(submission_id, {
+    storage.update_submission(submission_id, {
         "status": "done" if was_successful else "error",
         "error_message": error_message,
         "error_steps": error_steps,
@@ -389,25 +137,35 @@ def worker_loop():
         # does not slowly fill its disk
         if time.time() - last_cleanup > SECONDS_IN_A_DAY:
             last_cleanup = time.time()
-            delete_old_submissions()
-
-        # tidy up old files about once a day, so a server left running does not fill up
-        if time.time() - last_cleanup > SECONDS_IN_A_DAY:
-            last_cleanup = time.time()
 
             try:
-                delete_old_submissions()
+                storage.delete_old_submissions()
             except Exception as e:
                 logging.error(f"Could not tidy up old submissions. Error: {e}")
 
 
-# daemon means this thread does not keep the app running when it is shut down
-worker_thread = threading.Thread(target=worker_loop, daemon=True)
-worker_thread.start()
+if RUNS_PIPELINE_HERE:
+    # daemon means this thread does not keep the app running when it is shut down
+    worker_thread = threading.Thread(target=worker_loop, daemon=True)
+    worker_thread.start()
 
 
 def start_processing(submission_id, saved_name):
-    work_queue.put((submission_id, saved_name))
+    if RUNS_PIPELINE_HERE:
+        work_queue.put((submission_id, saved_name))
+        return
+
+    # on AWS, putting the deck in the uploads bucket is what starts the pipeline,
+    # so by the time we get here it is already on its way
+    logging.info(f"Submission {submission_id} ({saved_name}) handed to the pipeline by S3.")
+
+
+def restart_processing(submission_id, saved_name):
+    if RUNS_PIPELINE_HERE:
+        work_queue.put((submission_id, saved_name))
+        return
+
+    storage.restart_processing(saved_name)
 
 
 # Flask refuses an oversized upload before our own checks get a chance to run,
@@ -439,15 +197,14 @@ def save_one_upload(uploaded_file):
 
     submission_id = str(uuid.uuid4())[:8]
     saved_name = submission_id + "_" + secure_filename(filename)
-    save_path = os.path.join(app.config["UPLOAD_FOLDER"], saved_name)
 
     try:
-        uploaded_file.save(save_path)
-    except OSError as e:
-        logging.error(f"Could not save uploaded file {filename} to {save_path}. Error: {e}")
+        storage.save_upload(uploaded_file, saved_name)
+    except Exception as e:
+        logging.error(f"Could not save uploaded file {filename} as {saved_name}. Error: {e}")
         return None, f"{filename}: we could not save it. Please try again."
 
-    add_submission({
+    storage.add_submission({
         "id": submission_id,
         "owner_id": get_owner_id(),
         "original_filename": filename,
@@ -509,7 +266,7 @@ def upload():
 @app.route("/status")
 def status():
     # already newest first, and only the files this visitor sent in
-    submissions = get_submissions_for_owner(get_owner_id())
+    submissions = storage.get_submissions_for_owner(get_owner_id())
 
     return render_template("status.html", submissions=submissions)
 
@@ -613,15 +370,13 @@ def details(submission_id):
     totals = {}
 
     if matching_submission.get("alt_text_filename"):
-        report_path = os.path.join(PROCESSED_FOLDER, matching_submission["alt_text_filename"])
+        saved_report = storage.read_report(matching_submission)
 
-        if os.path.exists(report_path):
-            with open(report_path, "r", encoding="utf-8") as f:
-                report_text = f.read()
-
+        if saved_report is not None:
+            report_text = saved_report
             slides, totals = read_report(report_text)
         else:
-            logging.error(f"Details page for submission {submission_id} expected a report at {report_path}, but it's missing.")
+            logging.error(f"Details page for submission {submission_id} expected a report, but it could not be read.")
 
     return render_template(
         "details.html",
@@ -639,12 +394,18 @@ def progress(submission_id):
     if matching_submission is None:
         return jsonify({"status": "unknown", "done": 0, "total": 0})
 
-    counts = processing_progress.get(submission_id, {})
+    if RUNS_PIPELINE_HERE:
+        counts = processing_progress.get(submission_id, {})
+        done = counts.get("done", 0)
+        total = counts.get("total", 0)
+    else:
+        done = int(matching_submission.get("captions_done") or 0)
+        total = int(matching_submission.get("captions_total") or 0)
 
     return jsonify({
         "status": matching_submission["status"],
-        "done": counts.get("done", 0),
-        "total": counts.get("total", 0)
+        "done": done,
+        "total": total
     })
 
 
@@ -660,8 +421,8 @@ def retry_submission(submission_id):
         return redirect(url_for("details", submission_id=submission_id))
 
     filename = submission["saved_filename"]
-    if not os.path.exists(os.path.join(UPLOAD_FOLDER, filename)):
-        update_submission(submission_id, {
+    if not storage.upload_exists(filename):
+        storage.update_submission(submission_id, {
             "error_message": "The original upload is no longer available for retry.",
             "error_steps": ["Go back to the submit page and upload the presentation again."],
         })
@@ -669,10 +430,10 @@ def retry_submission(submission_id):
         return redirect(url_for("details", submission_id=submission_id))
 
     retry_count = submission["retry_count"] + 1
-    update_submission(submission_id, {"retry_count": retry_count, "status": "queued"})
+    storage.update_submission(submission_id, {"retry_count": retry_count, "status": "queued"})
 
     logging.info(f"Manual retry started for submission {submission_id} ({filename}), attempt {retry_count}.")
-    start_processing(submission_id, filename)
+    restart_processing(submission_id, filename)
 
     return redirect(url_for("details", submission_id=submission_id))
 
@@ -690,8 +451,8 @@ def delete(submission_id):
         flash("That file is still being worked on. Wait until it finishes, then delete it.")
         return redirect(url_for("details", submission_id=submission_id))
 
-    delete_submission_files(submission)
-    delete_submission(submission_id)
+    storage.delete_submission_files(submission)
+    storage.delete_submission(submission_id)
 
     logging.info(f"Submission {submission_id} ({submission['original_filename']}) was deleted by the person who sent it.")
     flash(f"Deleted {submission['original_filename']}.")
@@ -713,25 +474,12 @@ def download(submission_id):
         flash("That file isn't ready to download. It either failed processing or hasn't finished yet.")
         return redirect(url_for("details", submission_id=submission_id))
 
-    saved_name = matching_submission["saved_filename"]
-    processed_filename = os.path.splitext(saved_name)[0] + "_updated.pptx"
-
-    # the result is always a .pptx, even when an old .ppt was uploaded
-    original_stem = os.path.splitext(matching_submission["original_filename"])[0]
-    download_name = "accessible_" + original_stem + ".pptx"
-
-    processed_path = os.path.join(PROCESSED_FOLDER, processed_filename)
-    if not os.path.exists(processed_path):
-        logging.error(f"Download requested for submission {submission_id}, but {processed_path} is missing on disk.")
+    if not storage.processed_file_is_ready(matching_submission):
+        logging.error(f"Download requested for submission {submission_id}, but the processed file is missing.")
         flash("We couldn't find the processed file. Please try submitting it again.")
         return redirect(url_for("details", submission_id=submission_id))
 
-    return send_from_directory(
-        PROCESSED_FOLDER,
-        processed_filename,
-        as_attachment=True,
-        download_name=download_name
-    )
+    return storage.send_processed_file(matching_submission)
 
 
 if __name__ == "__main__":

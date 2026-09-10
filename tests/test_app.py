@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import app as app_module
+import storage_local as storage_module
 
 FIXTURE_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Error Test PPTX")
 
@@ -26,16 +27,21 @@ def client(tmp_path, monkeypatch):
     processed.mkdir()
     data.mkdir()
 
-    monkeypatch.setattr(app_module, "UPLOAD_FOLDER", str(uploads))
-    monkeypatch.setattr(app_module, "PROCESSED_FOLDER", str(processed))
-    monkeypatch.setattr(app_module, "DATABASE_FILE", str(data / "submissions.db"))
-    app_module.app.config["UPLOAD_FOLDER"] = str(uploads)
+    monkeypatch.setattr(storage_module, "UPLOAD_FOLDER", str(uploads))
+    monkeypatch.setattr(storage_module, "PROCESSED_FOLDER", str(processed))
+    monkeypatch.setattr(storage_module, "DATABASE_FILE", str(data / "submissions.db"))
 
-    app_module.setup_database()
+    # so a submissions.json sitting in the real data folder is never read into a test,
+    # and no test writes a key into it
+    monkeypatch.setattr(storage_module, "OLD_SUBMISSIONS_FILE", str(data / "submissions.json"))
+    monkeypatch.setattr(storage_module, "SECRET_KEY_FILE", str(data / "secret_key.txt"))
+
+    storage_module.setup()
 
     # the real pipeline is slow and needs a GPU, so tests only check that files get queued
     queued = []
     monkeypatch.setattr(app_module, "start_processing", lambda submission_id, saved_name: queued.append(submission_id))
+    monkeypatch.setattr(app_module, "restart_processing", lambda submission_id, saved_name: queued.append(submission_id))
 
     app_module.app.config["TESTING"] = True
     test_client = app_module.app.test_client()
@@ -71,7 +77,7 @@ def add_submission(submission_id="abc12345", owner_id=MY_OWNER_ID, status="done"
         "submitted_at": "2026-08-20 10:00",
     }
     submission.update(extras)
-    app_module.add_submission(submission)
+    storage_module.add_submission(submission)
 
     return submission
 
@@ -87,31 +93,31 @@ def copy_into(source_name, target_path):
 def test_a_submission_can_be_read_back(client):
     add_submission("read0001")
 
-    assert app_module.get_submission("read0001")["original_filename"] == "Lecture.pptx"
+    assert storage_module.get_submission("read0001")["original_filename"] == "Lecture.pptx"
 
 
 def test_an_unknown_submission_is_none(client):
-    assert app_module.get_submission("nosuchid") is None
+    assert storage_module.get_submission("nosuchid") is None
 
 
 def test_error_steps_survive_being_stored(client):
     add_submission("step0001", error_steps=["First thing", "Second thing"])
 
-    assert app_module.get_submission("step0001")["error_steps"] == ["First thing", "Second thing"]
+    assert storage_module.get_submission("step0001")["error_steps"] == ["First thing", "Second thing"]
 
 
 def test_updating_a_submission_changes_it(client):
     add_submission("edit0001", status="queued")
-    app_module.update_submission("edit0001", {"status": "done"})
+    storage_module.update_submission("edit0001", {"status": "done"})
 
-    assert app_module.get_submission("edit0001")["status"] == "done"
+    assert storage_module.get_submission("edit0001")["status"] == "done"
 
 
 def test_only_my_submissions_are_listed(client):
     add_submission("mine0001", owner_id=MY_OWNER_ID)
     add_submission("their001", owner_id=SOMEONE_ELSE)
 
-    mine = app_module.get_submissions_for_owner(MY_OWNER_ID)
+    mine = storage_module.get_submissions_for_owner(MY_OWNER_ID)
     ids = []
 
     for submission in mine:
@@ -177,7 +183,7 @@ def test_uploading_a_pptx_creates_a_submission(client):
 
     assert response.status_code == 200
 
-    submissions = app_module.get_submissions_for_owner(MY_OWNER_ID)
+    submissions = storage_module.get_submissions_for_owner(MY_OWNER_ID)
 
     assert len(submissions) == 1
     assert submissions[0]["original_filename"] == "control_no_issues.pptx"
@@ -188,7 +194,7 @@ def test_an_upload_belongs_to_the_person_who_sent_it(client):
     data = {"presentation": make_upload("control_no_issues.pptx")}
     client.post("/upload", data=data)
 
-    submissions = app_module.get_submissions_for_owner(MY_OWNER_ID)
+    submissions = storage_module.get_submissions_for_owner(MY_OWNER_ID)
 
     assert submissions[0]["owner_id"] == MY_OWNER_ID
 
@@ -211,7 +217,7 @@ def test_uploading_several_files_at_once(client):
     response = client.post("/upload", data=data, follow_redirects=True)
 
     assert b"3 file(s) added to the queue" in response.data
-    assert len(app_module.get_submissions_for_owner(MY_OWNER_ID)) == 3
+    assert len(storage_module.get_submissions_for_owner(MY_OWNER_ID)) == 3
     assert len(client.queued) == 3
 
 
@@ -225,7 +231,7 @@ def test_a_bad_file_does_not_stop_the_good_ones(client):
     response = client.post("/upload", data=data, follow_redirects=True)
 
     assert b"notes.txt" in response.data
-    assert len(app_module.get_submissions_for_owner(MY_OWNER_ID)) == 1
+    assert len(storage_module.get_submissions_for_owner(MY_OWNER_ID)) == 1
     assert len(client.queued) == 1
 
 
@@ -356,7 +362,7 @@ def test_downloading_an_unknown_id_goes_back_to_status(client):
 
 def test_downloading_someone_elses_file_is_refused(client):
     add_submission("their005", owner_id=SOMEONE_ELSE)
-    copy_into("control_no_issues.pptx", os.path.join(app_module.PROCESSED_FOLDER, "their005_Lecture_updated.pptx"))
+    copy_into("control_no_issues.pptx", os.path.join(storage_module.PROCESSED_FOLDER, "their005_Lecture_updated.pptx"))
 
     response = client.get("/download/their005", follow_redirects=True)
 
@@ -373,7 +379,7 @@ def test_downloading_when_the_processed_file_is_missing(client):
 
 def test_downloading_a_finished_file_sends_it(client):
     add_submission("good0001")
-    copy_into("control_no_issues.pptx", os.path.join(app_module.PROCESSED_FOLDER, "good0001_Lecture_updated.pptx"))
+    copy_into("control_no_issues.pptx", os.path.join(storage_module.PROCESSED_FOLDER, "good0001_Lecture_updated.pptx"))
 
     response = client.get("/download/good0001")
 
@@ -410,11 +416,11 @@ def test_retrying_queues_the_file_again(client):
     add_submission("redo0001", status="error")
 
     # the retry route needs the original upload to still be there
-    copy_into("control_no_issues.pptx", os.path.join(app_module.UPLOAD_FOLDER, "redo0001_Lecture.pptx"))
+    copy_into("control_no_issues.pptx", os.path.join(storage_module.UPLOAD_FOLDER, "redo0001_Lecture.pptx"))
 
     client.post("/retry/redo0001", follow_redirects=True)
 
-    submission = app_module.get_submission("redo0001")
+    submission = storage_module.get_submission("redo0001")
 
     assert submission["status"] == "queued"
     assert submission["retry_count"] == 1
@@ -427,15 +433,15 @@ def test_deleting_removes_the_submission(client):
     response = client.post("/delete/del00001", follow_redirects=True)
 
     assert b"Deleted Lecture.pptx" in response.data
-    assert app_module.get_submission("del00001") is None
+    assert storage_module.get_submission("del00001") is None
 
 
 def test_deleting_also_removes_the_files(client):
     add_submission("del00002")
 
-    upload_path = os.path.join(app_module.UPLOAD_FOLDER, "del00002_Lecture.pptx")
-    updated_path = os.path.join(app_module.PROCESSED_FOLDER, "del00002_Lecture_updated.pptx")
-    report_path = os.path.join(app_module.PROCESSED_FOLDER, "del00002_Lecture_alt_text")
+    upload_path = os.path.join(storage_module.UPLOAD_FOLDER, "del00002_Lecture.pptx")
+    updated_path = os.path.join(storage_module.PROCESSED_FOLDER, "del00002_Lecture_updated.pptx")
+    report_path = os.path.join(storage_module.PROCESSED_FOLDER, "del00002_Lecture_alt_text")
 
     copy_into("control_no_issues.pptx", upload_path)
     copy_into("control_no_issues.pptx", updated_path)
@@ -456,7 +462,7 @@ def test_deleting_someone_elses_submission_is_refused(client):
     response = client.post("/delete/their007", follow_redirects=True)
 
     assert b"could not be found" in response.data
-    assert app_module.get_submission("their007") is not None
+    assert storage_module.get_submission("their007") is not None
 
 
 def test_deleting_an_unknown_submission_is_refused(client):
@@ -471,7 +477,7 @@ def test_a_file_being_worked_on_cannot_be_deleted(client):
     response = client.post("/delete/busy0002", follow_redirects=True)
 
     assert b"still being worked on" in response.data
-    assert app_module.get_submission("busy0002") is not None
+    assert storage_module.get_submission("busy0002") is not None
 
 
 def test_a_failed_submission_can_be_deleted(client):
@@ -479,7 +485,7 @@ def test_a_failed_submission_can_be_deleted(client):
 
     client.post("/delete/bad00001", follow_redirects=True)
 
-    assert app_module.get_submission("bad00001") is None
+    assert storage_module.get_submission("bad00001") is None
 
 
 def test_the_details_page_offers_a_delete_button(client):
@@ -511,18 +517,18 @@ def test_files_left_mid_processing_are_marked_as_failed(client):
     add_submission("stuck002", status="queued")
     add_submission("fine0002", status="done")
 
-    app_module.recover_stuck_submissions()
+    storage_module.recover_stuck_submissions()
 
-    assert app_module.get_submission("stuck001")["status"] == "error"
-    assert app_module.get_submission("stuck002")["status"] == "error"
-    assert app_module.get_submission("fine0002")["status"] == "done"
+    assert storage_module.get_submission("stuck001")["status"] == "error"
+    assert storage_module.get_submission("stuck002")["status"] == "error"
+    assert storage_module.get_submission("fine0002")["status"] == "done"
 
 
 def test_a_recovered_file_explains_what_happened(client):
     add_submission("stuck003", status="processing")
 
-    app_module.recover_stuck_submissions()
-    submission = app_module.get_submission("stuck003")
+    storage_module.recover_stuck_submissions()
+    submission = storage_module.get_submission("stuck003")
 
     assert "restarted" in submission["error_message"]
     assert len(submission["error_steps"]) > 0
@@ -532,18 +538,18 @@ def test_old_submissions_are_deleted(client):
     add_submission("old00001", submitted_at="2020-01-01 09:00")
     add_submission("new00001", submitted_at=datetime.now().strftime("%Y-%m-%d %H:%M"))
 
-    app_module.delete_old_submissions()
+    storage_module.delete_old_submissions()
 
-    assert app_module.get_submission("old00001") is None
-    assert app_module.get_submission("new00001") is not None
+    assert storage_module.get_submission("old00001") is None
+    assert storage_module.get_submission("new00001") is not None
 
 
 def test_deleting_an_old_submission_removes_its_files(client):
     add_submission("old00002", submitted_at="2020-01-01 09:00")
-    upload_path = os.path.join(app_module.UPLOAD_FOLDER, "old00002_Lecture.pptx")
+    upload_path = os.path.join(storage_module.UPLOAD_FOLDER, "old00002_Lecture.pptx")
     copy_into("control_no_issues.pptx", upload_path)
 
-    app_module.delete_old_submissions()
+    storage_module.delete_old_submissions()
 
     assert not os.path.exists(upload_path)
 
@@ -563,18 +569,18 @@ def test_a_stuck_submission_is_marked_failed_after_a_restart(client):
     add_submission("stuck002", status="queued")
     add_submission("fine0002", status="done")
 
-    app_module.recover_stuck_submissions()
+    storage_module.recover_stuck_submissions()
 
-    assert app_module.get_submission("stuck001")["status"] == "error"
-    assert app_module.get_submission("stuck002")["status"] == "error"
-    assert app_module.get_submission("fine0002")["status"] == "done"
+    assert storage_module.get_submission("stuck001")["status"] == "error"
+    assert storage_module.get_submission("stuck002")["status"] == "error"
+    assert storage_module.get_submission("fine0002")["status"] == "done"
 
 
 def test_a_recovered_submission_explains_what_happened(client):
     add_submission("stuck003", status="processing")
 
-    app_module.recover_stuck_submissions()
-    submission = app_module.get_submission("stuck003")
+    storage_module.recover_stuck_submissions()
+    submission = storage_module.get_submission("stuck003")
 
     assert "restarted" in submission["error_message"]
     assert len(submission["error_steps"]) > 0
@@ -584,18 +590,18 @@ def test_old_submissions_are_deleted(client):
     add_submission("old00001", submitted_at="2020-01-01 09:00")
     add_submission("new00001", submitted_at=datetime.now().strftime("%Y-%m-%d %H:%M"))
 
-    app_module.delete_old_submissions()
+    storage_module.delete_old_submissions()
 
-    assert app_module.get_submission("old00001") is None
-    assert app_module.get_submission("new00001") is not None
+    assert storage_module.get_submission("old00001") is None
+    assert storage_module.get_submission("new00001") is not None
 
 
 def test_deleting_old_submissions_removes_their_files(client):
     add_submission("old00002", submitted_at="2020-01-01 09:00")
-    updated = os.path.join(app_module.PROCESSED_FOLDER, "old00002_Lecture_updated.pptx")
+    updated = os.path.join(storage_module.PROCESSED_FOLDER, "old00002_Lecture_updated.pptx")
     copy_into("control_no_issues.pptx", updated)
 
-    app_module.delete_old_submissions()
+    storage_module.delete_old_submissions()
 
     assert not os.path.exists(updated)
 
@@ -603,9 +609,9 @@ def test_deleting_old_submissions_removes_their_files(client):
 def test_a_submission_with_an_odd_date_is_left_alone(client):
     add_submission("weird001", submitted_at="not a real date")
 
-    app_module.delete_old_submissions()
+    storage_module.delete_old_submissions()
 
-    assert app_module.get_submission("weird001") is not None
+    assert storage_module.get_submission("weird001") is not None
 
 
 def test_an_oversized_upload_gets_a_friendly_message(client):
@@ -621,8 +627,8 @@ def test_an_oversized_upload_gets_a_friendly_message(client):
 def test_a_new_visitor_gets_their_own_id(tmp_path, monkeypatch):
     data = tmp_path / "data2"
     data.mkdir()
-    monkeypatch.setattr(app_module, "DATABASE_FILE", str(data / "submissions.db"))
-    app_module.setup_database()
+    monkeypatch.setattr(storage_module, "DATABASE_FILE", str(data / "submissions.db"))
+    storage_module.setup()
 
     fresh_browser = app_module.app.test_client()
     fresh_browser.get("/status")
