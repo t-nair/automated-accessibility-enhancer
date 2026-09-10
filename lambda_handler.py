@@ -12,6 +12,7 @@ actual work is `z_reorder.process_one_file`, exactly as `app.py` calls it.
 
 import os
 import json
+import time
 import shutil
 import logging
 import urllib.parse
@@ -29,6 +30,11 @@ logging.getLogger().setLevel(os.environ.get("LOG_LEVEL", "INFO"))
 
 PROCESSED_BUCKET = os.environ.get("PROCESSED_BUCKET", "")
 
+# the table the website reads. The status file below is still written next to the
+# results, but the site watches the table, because that is also where the progress
+# bar gets its numbers from while a deck is still being worked on.
+SUBMISSIONS_TABLE = os.environ.get("SUBMISSIONS_TABLE", "")
+
 # the only writable place in a Lambda container
 WORK_ROOT = "/tmp/work"
 
@@ -39,6 +45,68 @@ ALLOWED_EXTENSIONS = (".pptx", ".ppt")
 RESULT_SUFFIXES = ("_updated.pptx", "_alt_text")
 
 s3 = boto3.client("s3")
+
+_table = None
+
+
+def get_table():
+    """The submissions table, or None when the function is running without one."""
+    global _table
+
+    if not SUBMISSIONS_TABLE:
+        return None
+
+    if _table is None:
+        _table = boto3.resource("dynamodb").Table(SUBMISSIONS_TABLE)
+
+    return _table
+
+
+def submission_id_from_key(key):
+    """The website saves a deck as "<id>_<original name>", so the id is the prefix.
+
+    Returns None for anything that does not look like one of ours, such as a file
+    put in the bucket by hand, so the pipeline still runs but no row is touched.
+    """
+    name = os.path.basename(key)
+
+    if "_" not in name:
+        return None
+
+    return name.split("_", 1)[0]
+
+
+def update_row(submission_id, changes):
+    """Write to the submission's row, and never fail the deck over it.
+
+    A caption that has been generated matters more than the progress bar being
+    right, so a table problem is logged and the run carries on.
+    """
+    table = get_table()
+
+    if table is None or submission_id is None:
+        return
+
+    assignments = []
+    names = {}
+    values = {}
+    number = 0
+
+    for field, value in changes.items():
+        number += 1
+        names[f"#f{number}"] = field
+        assignments.append(f"#f{number} = :v{number}")
+        values[f":v{number}"] = value
+
+    try:
+        table.update_item(
+            Key={"id": submission_id},
+            UpdateExpression="SET " + ", ".join(assignments),
+            ExpressionAttributeNames=names,
+            ExpressionAttributeValues=values,
+        )
+    except Exception as e:
+        logging.warning(f"Could not update submission {submission_id} in {SUBMISSIONS_TABLE}. Error: {e}")
 
 
 def status_key(key):
@@ -83,21 +151,62 @@ def process_one_object(bucket, key):
     os.makedirs(input_folder, exist_ok=True)
     os.makedirs(output_folder, exist_ok=True)
 
+    submission_id = submission_id_from_key(key)
+
+    # started_at is how the website tells a run that is still going from one that
+    # died without saying so, since nothing else is watching this function
+    update_row(submission_id, {
+        "status": "processing",
+        "started_at": int(time.time()),
+        "captions_done": 0,
+        "captions_total": 0,
+    })
+
+    def report_progress(captions_done, total_to_caption):
+        update_row(submission_id, {
+            "captions_done": captions_done,
+            "captions_total": total_to_caption,
+        })
+
     try:
         download_path = os.path.join(input_folder, filename)
         s3.download_file(bucket, key, download_path)
         logging.info(f"Downloaded s3://{bucket}/{key}")
 
-        was_successful, message, steps = process_one_file(filename, input_folder, output_folder)
+        was_successful, message, steps = process_one_file(
+            filename, input_folder, output_folder, report_progress
+        )
 
         if was_successful:
             upload_results(key, output_folder)
 
         write_status(key, was_successful, message, steps)
+        write_outcome(submission_id, key, was_successful, message, steps)
 
         return was_successful, message, steps
+    except Exception as e:
+        logging.error(f"Unexpected problem while processing {key}. Error: {e}")
+        write_outcome(submission_id, key, False, "Something went wrong while processing this file.", [
+            "Try again from the submission page.",
+            "If it fails again, open the file in PowerPoint and save it as a new .pptx.",
+        ])
+        raise
     finally:
         shutil.rmtree(WORK_ROOT, ignore_errors=True)
+
+
+def write_outcome(submission_id, key, was_successful, message, steps):
+    """Put the finished state on the row the website reads."""
+    changes = {"status": "done" if was_successful else "error"}
+
+    if was_successful:
+        name_without_extension = os.path.splitext(os.path.basename(key))[0]
+        changes["alt_text_filename"] = name_without_extension + "_alt_text"
+    else:
+        changes["error_message"] = message or "Something went wrong while processing this file."
+        changes["error_steps"] = steps or ["Try again from the submission page."]
+
+    update_row(submission_id, changes)
 
 
 def upload_results(key, output_folder):

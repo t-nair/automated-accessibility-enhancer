@@ -29,3 +29,18 @@ output "github_actions_role_arn" {
   description = "Give this to aws-actions/configure-aws-credentials as role-to-assume."
   value       = module.ci_role.role_arn
 }
+
+output "website_url" {
+  description = "The address to open in a browser. App Runner provides the certificate."
+  value       = module.website.service_url
+}
+
+output "web_repository_url" {
+  description = "Where to push the website image."
+  value       = module.ecr_web.repository_url
+}
+
+output "submissions_table_name" {
+  description = "The DynamoDB table holding submissions."
+  value       = module.submissions.table_name
+}

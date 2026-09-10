@@ -110,3 +110,39 @@ variable "create_oidc_provider" {
   type        = bool
   default     = true
 }
+
+variable "submissions_point_in_time_recovery" {
+  description = "Whether the submissions table keeps continuous backups. Worth turning on for anything people rely on."
+  type        = bool
+  default     = false
+}
+
+variable "web_cpu" {
+  description = "vCPU for each website instance."
+  type        = string
+  default     = "0.25 vCPU"
+}
+
+variable "web_memory" {
+  description = "Memory for each website instance."
+  type        = string
+  default     = "0.5 GB"
+}
+
+variable "web_min_instances" {
+  description = "Website instances kept warm. One is App Runner's lowest."
+  type        = number
+  default     = 1
+}
+
+variable "web_max_instances" {
+  description = "How far the website may scale out."
+  type        = number
+  default     = 2
+}
+
+variable "web_deploy_on_push" {
+  description = "Whether pushing a new website image deploys it straight away."
+  type        = bool
+  default     = true
+}

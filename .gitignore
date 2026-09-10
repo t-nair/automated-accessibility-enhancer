@@ -11,13 +11,11 @@ processed/
 pptx_output/
 pptx_input/
 
-# Runtime data and logs
-data/submissions.json
+# Runtime data and logs. The whole folder rather than the files in it, because
+# everything the app writes there is runtime data, and naming them one at a time
+# means anything else that lands in it gets committed by accident.
+data/
 pipeline.log
-
-# database and session key are runtime data, not source
-data/submissions.db
-data/secret_key.txt
 
 # Terraform working directories and provider downloads
 **/.terraform/*
