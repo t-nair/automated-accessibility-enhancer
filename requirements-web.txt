@@ -1,0 +1,7 @@
+# The website on top of the pipeline. Flask is deliberately not in
+# requirements.txt: the Lambda image has no use for it and it is a slow, large
+# thing to install into a container that will never serve a page.
+-r requirements.txt
+
+Flask
+waitress

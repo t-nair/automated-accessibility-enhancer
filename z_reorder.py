@@ -4,13 +4,12 @@ import json
 import re
 import time
 import shutil
+import base64
 import logging
 import subprocess
-import torch
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from PIL import Image
-from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 
 logging.basicConfig(
     filename="pipeline.log",
@@ -20,8 +19,9 @@ logging.basicConfig(
 
 # these libraries log every network request at INFO level, which just buries our own log lines
 logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
-logging.getLogger("filelock").setLevel(logging.WARNING)
+logging.getLogger("anthropic").setLevel(logging.WARNING)
+logging.getLogger("botocore").setLevel(logging.WARNING)
+logging.getLogger("boto3").setLevel(logging.WARNING)
 
 MAX_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 2
@@ -51,7 +51,22 @@ AUTO_SHAPE_NAME = re.compile(rf"^(?:{_AUTO_SHAPE_NAME}|\({_AUTO_SHAPE_NAME}\))$"
 # a real title placeholder is authoritative, the shape name is only a fallback
 TITLE_PLACEHOLDERS = (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
 
-CAPTION_MODEL_NAME = "Qwen/Qwen2-VL-2B-Instruct"
+# Descriptions come from Claude on Amazon Bedrock rather than a model running on
+# this machine. That is what lets the pipeline run in a Lambda function: there is
+# no 4.4 GB download on first use, no GPU to find, and a cold start is just the
+# container coming up.
+#
+# Model IDs on Bedrock carry an "anthropic." prefix. A first-party id like
+# "claude-opus-5" is rejected there.
+CAPTION_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-opus-5")
+
+# Lambda sets AWS_REGION itself and will not let it be overridden, so the Bedrock
+# region is its own variable. It matters because the Messages API endpoint on
+# Bedrock is served in a subset of regions, which need not include the one the
+# function happens to run in.
+CAPTION_REGION = (os.environ.get("BEDROCK_REGION")
+                  or os.environ.get("AWS_REGION")
+                  or "us-west-2")
 
 # the model is told once, here, what kind of description we want. Faculty never see
 # or type this, it is just how we ask for a caption that works as alt text.
@@ -64,51 +79,99 @@ CAPTION_PROMPT = (
     "If it is a diagram, chart or equation, say what kind it is, quote the labels that appear on it "
     "exactly as they are written, and say how the parts are arranged or connected. "
     "If it is a photograph, describe what is happening in it. "
-    "Only describe what is actually visible. Do not invent labels, numbers or values."
+    "Only describe what is actually visible. Do not invent labels, numbers or values. "
+    "Reply with the alt text only, with no preamble and no quotation marks around it."
 )
 
 # the words on the slide usually say what the image is there to show, which helps the
 # model describe it correctly. Long slides get cut short so the prompt stays focused.
 SLIDE_CONTEXT_MAX_CHARS = 400
 
-# keeps a very large slide image from using far more GPU memory than it needs
-CAPTION_MIN_PIXELS = 256 * 28 * 28
-CAPTION_MAX_PIXELS = 768 * 28 * 28
+# Alt text is a sentence or two, so this is not a budget, it is a guard against a
+# runaway response. It is deliberately well above what a caption needs: the model
+# thinks before it answers, and a tight limit would cut the caption off rather
+# than save anything, since only tokens actually produced are billed.
+CAPTION_MAX_TOKENS = 2000
 
-CAPTION_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# describing a picture is not a hard reasoning problem, and the low setting keeps
+# both the wait and the cost per image down
+CAPTION_EFFORT = "low"
 
-# half precision saves GPU memory, but on CPU it is slower than normal precision
-if CAPTION_DEVICE.type == "cuda":
-    CAPTION_DTYPE = torch.float16
-else:
-    CAPTION_DTYPE = torch.float32
+# what Claude accepts directly. A slide can also hold emf, wmf, bmp or tiff,
+# which PowerPoint produces for pasted vector art and screenshots, so anything
+# outside this set is re-encoded as PNG first.
+BEDROCK_IMAGE_TYPES = ("image/jpeg", "image/png", "image/gif", "image/webp")
 
-# loaded the first time we actually need to caption an image, so app startup stays fast
-caption_processor = None
-caption_model = None
+# a picture larger than this is scaled down before it is sent. The extra pixels
+# do not make the description better, they just cost tokens on every image in
+# every deck.
+MAX_IMAGE_DIMENSION = 1024
+
+# the SDK retries throttling and server errors on its own, with backoff, which is
+# the whole retry story for captioning
+CAPTION_MAX_RETRIES = 4
+
+# built the first time a picture actually needs describing, so importing this
+# module stays cheap and the tests never need AWS credentials
+caption_client = None
 
 
-def get_caption_model():
-    global caption_processor, caption_model
+class CaptionRefused(Exception):
+    """Claude declined to describe an image.
 
-    if caption_model is None:
-        logging.info(f"Loading image captioning model ({CAPTION_MODEL_NAME}) on {CAPTION_DEVICE}. This can take a while the first time.")
+    Raised so the caller falls back to placeholder alt text the same way it does
+    for any other captioning failure, rather than writing the refusal itself into
+    the deck as if it were a description.
+    """
 
-        if CAPTION_DEVICE.type == "cuda":
-            logging.info(f"Using GPU: {torch.cuda.get_device_name(0)}")
-        else:
-            logging.warning("No GPU available, so captions will be generated on the CPU. This is slower.")
 
-        caption_processor = AutoProcessor.from_pretrained(
-            CAPTION_MODEL_NAME,
-            min_pixels=CAPTION_MIN_PIXELS,
-            max_pixels=CAPTION_MAX_PIXELS
+def get_caption_client():
+    global caption_client
+
+    if caption_client is None:
+        # imported here rather than at the top so that the pipeline can be
+        # imported, and the tests run, without the AWS SDK installed
+        from anthropic import AnthropicBedrockMantle
+
+        logging.info(f"Captioning with {CAPTION_MODEL_ID} on Bedrock in {CAPTION_REGION}.")
+
+        caption_client = AnthropicBedrockMantle(
+            aws_region=CAPTION_REGION,
+            max_retries=CAPTION_MAX_RETRIES,
         )
-        caption_model = Qwen2VLForConditionalGeneration.from_pretrained(CAPTION_MODEL_NAME, dtype=CAPTION_DTYPE)
-        caption_model.to(CAPTION_DEVICE)
-        caption_model.eval()
 
-    return caption_processor, caption_model
+    return caption_client
+
+
+def prepare_image_for_caption(image):
+    """Return (media_type, base64 data) for a picture, ready to send to Claude.
+
+    Formats Claude does not accept are re-encoded as PNG, and anything oversized
+    is scaled down first.
+    """
+    media_type = (image.content_type or "").lower()
+    blob = image.blob
+
+    picture = Image.open(io.BytesIO(blob))
+    oversized = max(picture.size) > MAX_IMAGE_DIMENSION
+
+    # already in a format Claude takes, and small enough, so send the original
+    # bytes rather than re-encoding them and losing quality for nothing
+    if media_type in BEDROCK_IMAGE_TYPES and not oversized:
+        return media_type, base64.b64encode(blob).decode("ascii")
+
+    if oversized:
+        picture.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
+
+    # PNG keeps transparency, which most of the logos and diagrams in a lecture
+    # deck rely on. CMYK and palette images cannot be saved as PNG directly.
+    if picture.mode not in ("RGB", "RGBA", "L", "P"):
+        picture = picture.convert("RGB")
+
+    buffer = io.BytesIO()
+    picture.save(buffer, format="PNG")
+
+    return "image/png", base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
 def tidy_caption(caption):
@@ -127,6 +190,11 @@ def tidy_caption(caption):
     ]
 
     caption = caption.strip()
+
+    # a chat model asked for a sentence sometimes hands one back in quotes, and a
+    # screen reader announces those
+    if len(caption) > 1 and caption[0] == caption[-1] and caption[0] in "\"'":
+        caption = caption[1:-1].strip()
 
     for filler in filler_starts:
         if caption.lower().startswith(filler):
@@ -194,28 +262,54 @@ def build_caption_prompt(slide_text):
 
 
 def generate_image_caption(shape, slide_text=""):
-    image_bytes = shape.image.blob
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-
-    processor, model = get_caption_model()
+    media_type, image_data = prepare_image_for_caption(shape.image)
     prompt = build_caption_prompt(slide_text)
-
-    messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}]
-    chat_text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = processor(text=[chat_text], images=[image], return_tensors="pt").to(CAPTION_DEVICE)
+    client = get_caption_client()
 
     start_time = time.perf_counter()
 
-    with torch.inference_mode():
-        output = model.generate(**inputs, max_new_tokens=70, do_sample=False)
+    response = client.messages.create(
+        model=CAPTION_MODEL_ID,
+        max_tokens=CAPTION_MAX_TOKENS,
+        output_config={"effort": CAPTION_EFFORT},
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": image_data,
+                    },
+                },
+                {"type": "text", "text": prompt},
+            ],
+        }],
+    )
 
     seconds_taken = time.perf_counter() - start_time
 
-    # the model echoes the prompt back, so only keep the tokens it added
-    new_tokens = output[0][len(inputs.input_ids[0]):]
-    caption = processor.decode(new_tokens, skip_special_tokens=True)
+    # a refusal comes back as a normal successful response, so it has to be
+    # checked for rather than caught
+    if response.stop_reason == "refusal":
+        category = getattr(response.stop_details, "category", None)
+        raise CaptionRefused(f"Claude declined to describe this image (category: {category}).")
 
-    logging.info(f"Caption generated in {seconds_taken:.2f} seconds on {CAPTION_DEVICE}.")
+    # the response can hold more than text, so pick out only the text blocks
+    caption = "".join(block.text for block in response.content if block.type == "text")
+
+    if not caption.strip():
+        raise CaptionRefused("Claude returned no description for this image.")
+
+    if response.stop_reason == "max_tokens":
+        logging.warning(
+            f"The description for {shape.name} hit the token limit and may be cut short.")
+
+    usage = response.usage
+    logging.info(
+        f"Caption generated in {seconds_taken:.2f} seconds "
+        f"({usage.input_tokens} tokens in, {usage.output_tokens} out).")
 
     return tidy_caption(caption)
 
