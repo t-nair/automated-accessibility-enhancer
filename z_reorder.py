@@ -1,12 +1,14 @@
 import os
 import io
 import json
+import re
 import time
 import shutil
 import logging
 import subprocess
 import torch
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from PIL import Image
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 
@@ -31,6 +33,23 @@ LIBREOFFICE_LOCATIONS = [
     r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
 ]
 CONVERT_TIMEOUT_SECONDS = 120
+
+# PowerPoint fills a picture's alt text with its source filename when the picture is
+# inserted, so a deck can look fully described while telling a screen reader nothing.
+# Alt text ending in one of these is treated as missing and gets a real caption.
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff",
+                    ".emf", ".wmf", ".svg", ".webp")
+
+# The names PowerPoint gives a picture on its own, e.g. "Picture 3", "Image 5".
+# Alt text that only repeats a name like this says nothing, but alt text that
+# repeats a name the author chose deliberately may well be a real description,
+# so only auto-generated names count as placeholder text.
+# the parentheses have to balance: "(Picture 3" is not a name PowerPoint writes
+_AUTO_SHAPE_NAME = r"(?:picture|image|graphic|picture placeholder|content placeholder)\s*\d+"
+AUTO_SHAPE_NAME = re.compile(rf"^(?:{_AUTO_SHAPE_NAME}|\({_AUTO_SHAPE_NAME}\))$")
+
+# a real title placeholder is authoritative, the shape name is only a fallback
+TITLE_PLACEHOLDERS = (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
 
 CAPTION_MODEL_NAME = "Qwen/Qwen2-VL-2B-Instruct"
 
@@ -520,7 +539,7 @@ def shapes_with_a_position(slide):
         if shape.top is None or shape.left is None or shape.width is None or shape.height is None:
             continue
 
-        if shape.shape_type == 13 or (shape.has_text_frame and shape.text.strip()):
+        if is_picture(shape) or (shape.has_text_frame and shape.text.strip()):
             found.append(shape)
 
     return found
@@ -712,6 +731,100 @@ def measure_reading_level(text):
     grade = (0.39 * words_per_sentence) + (11.8 * syllables_per_word) - 15.59
 
     return round(grade, 1)
+def get_shape_type(shape):
+    """Return the shape's MSO type, or None if python-pptx cannot resolve it.
+
+    python-pptx raises for shape types it does not model. One exotic shape should
+    not take down the whole deck, so callers treat None as "not a picture".
+    """
+    try:
+        return shape.shape_type
+    except (NotImplementedError, ValueError):
+        return None
+
+
+def is_picture(shape):
+    return get_shape_type(shape) == MSO_SHAPE_TYPE.PICTURE
+
+
+def is_title(shape):
+    """True if the shape looks like a slide title.
+
+    The placeholder type is checked first because it is authoritative, and the
+    shape name is a fallback so plain text boxes acting as titles are caught too.
+    The name check is case insensitive: matching only "Title" misses a real title
+    placeholder named "title 1". Subtitles are excluded, since "subtitle"
+    contains "title" but is not one.
+    """
+    try:
+        if shape.is_placeholder and shape.placeholder_format.type in TITLE_PLACEHOLDERS:
+            return True
+    except (AttributeError, KeyError, ValueError):
+        pass
+
+    name = shape.name.lower()
+
+    return "title" in name and "subtitle" not in name
+
+
+def is_placeholder_alt_text(alt_text, shape_name):
+    """True if alt text exists but is not a real description.
+
+    Covers PowerPoint's auto-filled source filename, and alt text that only
+    repeats a shape name PowerPoint generated itself.
+
+    Alt text matching a name the author chose is left alone. Someone who renames
+    a shape to "Water cycle diagram" and writes the same description meant it,
+    and replacing real alt text is worse than leaving a thin description alone.
+    """
+    if not alt_text:
+        return False
+
+    candidate = alt_text.strip().lower()
+    name = shape_name.strip().lower()
+
+    if candidate.endswith(IMAGE_EXTENSIONS):
+        return True
+
+    return candidate == name and AUTO_SHAPE_NAME.match(name) is not None
+
+
+def needs_caption(shape):
+    """True if this is a picture with no alt text a screen reader could use."""
+    if not is_picture(shape):
+        return False
+
+    return looks_like_junk_alt_text(get_picture_alt_text(shape), shape.name)
+
+
+def move_titles_to_front(slide):
+    """Move title shapes to the front of the slide's reading order.
+
+    Returns the number of shapes moved. The shape list is snapshotted before any
+    mutation: re-reading slide.shapes[0] while reordering re-anchors on a shape
+    that has already moved, which reverses the order of a slide with more than
+    one title.
+    """
+    shapes = list(slide.shapes)
+    titles = [shape for shape in shapes if is_title(shape)]
+
+    if not titles:
+        return 0
+
+    # already in the right order, so nothing to do. This also makes a second run
+    # over an already-processed deck a no-op.
+    if shapes[:len(titles)] == titles:
+        return 0
+
+    # Anchor on the first non-title shape rather than shapes[0]. If shapes[0] is
+    # itself a title, inserting the remaining titles before it puts them in
+    # reverse order. The early return above guarantees a non-title shape exists.
+    anchor = next(shape for shape in shapes if not is_title(shape))._element
+
+    for title in titles:
+        anchor.addprevious(title._element)
+
+    return len(titles)
 
 
 def count_images_needing_captions(prs):
@@ -719,28 +832,13 @@ def count_images_needing_captions(prs):
 
     for slide in prs.slides:
         for shape in slide.shapes:
-            if shape.shape_type == 13 and needs_a_description(shape):
+            if needs_caption(shape):
                 total += 1
 
     return total
 
 
 # fixes the reading order and returns one record per shape, which becomes the report
-# a screen reader reads the shapes in the order they sit in the file, so moving the
-# title to the front is what makes it get announced first
-def move_titles_to_front(slide):
-    titles = []
-
-    for shape in slide.shapes:
-        if "Title" in shape.name:
-            titles.append(shape)
-
-    # backwards, because each one is put in front of the one moved before it
-    for shape in reversed(titles):
-        first_element = slide.shapes[0]._element
-        first_element.addprevious(shape._element)
-
-
 def fix_titles_and_describe_shapes(prs, filename, progress_callback=None):
     total_to_caption = count_images_needing_captions(prs)
     captions_done = 0
@@ -765,7 +863,10 @@ def fix_titles_and_describe_shapes(prs, filename, progress_callback=None):
 
         # the whole point of this tool is to put the title first, so do that before
         # checking the order, otherwise we report a problem we are about to fix
-        move_titles_to_front(slide)
+        moved = move_titles_to_front(slide)
+
+        if moved:
+            logging.info(f"{filename}: slide {slide_number} moved {moved} title shape(s) to the front.")
 
         title = get_slide_title(slide)
         problems.extend(find_slide_problems(
@@ -778,8 +879,10 @@ def fix_titles_and_describe_shapes(prs, filename, progress_callback=None):
         slide_text = get_slide_text(slide)
         all_words.append(get_all_slide_text(slide))
 
-        for shape in slide.shapes:
-            needed_caption = shape.shape_type == 13 and not get_picture_alt_text(shape)
+        # read the shapes back after reordering, so the report lists them in the
+        # order a screen reader will actually announce them
+        for shape in list(slide.shapes):
+            needed_caption = needs_caption(shape)
 
             records.append(describe_shape(shape, slide_number, slide_text))
 
@@ -816,6 +919,10 @@ def looks_like_junk_alt_text(alt_text, shape_name):
     if text == "Image " + shape_name:
         return True
 
+    # the source filename PowerPoint fills in, or an echo of a name it made up
+    if is_placeholder_alt_text(text, shape_name):
+        return True
+
     if lowered.startswith("http://") or lowered.startswith("https://"):
         return True
 
@@ -847,14 +954,10 @@ def set_picture_alt_text(shape, alt_text):
     shape._element.nvPicPr.cNvPr.set("descr", alt_text)
 
 
-def needs_a_description(shape):
-    return looks_like_junk_alt_text(get_picture_alt_text(shape), shape.name)
-
-
 # builds one line of the report, and writes a description into the file if the
 # picture did not already have one
 def describe_shape(shape, slide_number, slide_text=""):
-    if shape.shape_type == 13:  # 13 is the shape type for pictures
+    if is_picture(shape):
         existing_alt_text = get_picture_alt_text(shape)
 
         if not looks_like_junk_alt_text(existing_alt_text, shape.name):

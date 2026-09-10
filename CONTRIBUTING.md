@@ -30,9 +30,17 @@ If you experience or observe unacceptable behavior, contact the maintainer (see 
 git clone https://github.com/<your-username>/automated-accessibility-enhancer.git
 cd automated-accessibility-enhancer
 python -m venv .venv
-source .venv/bin/activate
-pip install requirements.txt
+source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
+
+Then run it against a directory of decks:
+
+```bash
+python z_reorder.py INPUT_DIR OUTPUT_DIR
+```
+
+See [SETUP.md](SETUP.md) for a detailed walkthrough.
 
 ---
 
