@@ -43,9 +43,17 @@ resource "aws_dynamodb_table" "submissions" {
   # The name has to match OWNER_INDEX in storage_aws.py.
   global_secondary_index {
     name            = "owner_id-submitted_at-index"
-    hash_key        = "owner_id"
-    range_key       = "submitted_at"
     projection_type = "ALL"
+
+    key_schema {
+      attribute_name = "owner_id"
+      key_type       = "HASH"
+    }
+
+    key_schema {
+      attribute_name = "submitted_at"
+      key_type       = "RANGE"
+    }
   }
 
   # rows delete themselves once expires_at passes, which is how the retention

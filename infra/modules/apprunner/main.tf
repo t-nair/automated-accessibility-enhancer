@@ -158,12 +158,12 @@ resource "aws_apprunner_service" "this" {
         port = "8080"
 
         runtime_environment_variables = {
-          UPLOADS_BUCKET        = var.uploads_bucket_name
-          PROCESSED_BUCKET      = var.processed_bucket_name
-          SUBMISSIONS_TABLE     = var.submissions_table_name
-          SECRET_KEY_PARAMETER  = var.secret_key_parameter_name
+          UPLOADS_BUCKET           = var.uploads_bucket_name
+          PROCESSED_BUCKET         = var.processed_bucket_name
+          SUBMISSIONS_TABLE        = var.submissions_table_name
+          SECRET_KEY_PARAMETER     = var.secret_key_parameter_name
           PIPELINE_TIMEOUT_SECONDS = tostring(var.pipeline_timeout_seconds)
-          DEBUG                 = "false"
+          DEBUG                    = "false"
         }
       }
     }
