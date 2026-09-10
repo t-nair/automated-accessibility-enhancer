@@ -1,0 +1,27 @@
+# The website as a container image, for App Runner.
+#
+# Separate from the Lambda image on purpose. This one needs Flask, the templates
+# and the static files but never opens a deck, so it does not carry LibreOffice.
+# The Lambda image is the other way round.
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# installed on its own so that editing the site does not rebuild this layer
+COPY requirements.txt requirements-web.txt ./
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements-web.txt
+
+COPY app.py storage_local.py storage_aws.py z_reorder.py ./
+COPY templates/ templates/
+COPY static/ static/
+
+# App Runner sends requests to this port and expects the app to be listening on
+# every interface, not just localhost
+ENV PORT=8080
+EXPOSE 8080
+
+# waitress rather than Flask's own server, which says plainly that it is not
+# meant to face the internet. gunicorn is the usual choice but does not run on
+# Windows, and this has to be runnable on a laptop too.
+CMD ["waitress-serve", "--host=0.0.0.0", "--port=8080", "app:app"]

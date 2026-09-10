@@ -73,6 +73,18 @@ data "aws_iam_policy_document" "this" {
     resources = ["${var.processed_bucket_arn}/*"]
   }
 
+  # the pipeline says how far along it is on the submission's own row, which is
+  # where the website's progress bar reads from. It only ever updates a row the
+  # website has already created, so it cannot put one there or take one away.
+  statement {
+    sid    = "ReportProgress"
+    effect = "Allow"
+
+    actions = ["dynamodb:UpdateItem"]
+
+    resources = [var.submissions_table_arn]
+  }
+
   # Captioning goes through the Messages API endpoint on Bedrock
   # (bedrock-mantle), whose inference call authorizes
   # bedrock-mantle:CreateInference. That is a different action from
@@ -121,8 +133,9 @@ resource "aws_lambda_function" "this" {
 
   environment {
     variables = {
-      PROCESSED_BUCKET = var.processed_bucket_name
-      BEDROCK_MODEL_ID = var.bedrock_model_id
+      PROCESSED_BUCKET  = var.processed_bucket_name
+      SUBMISSIONS_TABLE = var.submissions_table_name
+      BEDROCK_MODEL_ID  = var.bedrock_model_id
 
       # AWS_REGION is reserved and set by Lambda itself, so the Bedrock region
       # is its own variable. It matters because bedrock-mantle is served in a

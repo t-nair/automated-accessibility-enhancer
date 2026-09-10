@@ -109,3 +109,13 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "submissions_table_name" {
+  description = "Name of the submissions table. The pipeline updates the row for the deck it is working on so the website can show progress."
+  type        = string
+}
+
+variable "submissions_table_arn" {
+  description = "ARN of the submissions table, for the policy."
+  type        = string
+}

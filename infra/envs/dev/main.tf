@@ -11,6 +11,11 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
+
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 }
 
@@ -49,6 +54,46 @@ module "ecr" {
   repository_name = "${local.name_prefix}-pipeline"
 }
 
+# a second repository, because the website and the pipeline are different images:
+# the pipeline carries LibreOffice and never serves a page, the website serves
+# pages and never opens a deck
+module "ecr_web" {
+  source = "../../modules/ecr"
+
+  repository_name = "${local.name_prefix}-web"
+}
+
+module "submissions" {
+  source = "../../modules/dynamodb"
+
+  table_name             = "${local.name_prefix}-submissions"
+  point_in_time_recovery = var.submissions_point_in_time_recovery
+}
+
+# The key that signs the session cookie. It is generated here rather than typed
+# in, and kept out of the Terraform outputs, so it exists in the state file and
+# in Parameter Store and nowhere else.
+#
+# Changing it signs everyone out, in the sense that every visitor loses the list
+# of files they have sent in. There are no accounts, so that is the whole of what
+# a session holds.
+resource "random_password" "session_key" {
+  length  = 64
+  special = false
+}
+
+resource "aws_ssm_parameter" "session_key" {
+  name        = "/${var.project}/${var.environment}/session-key"
+  description = "Signs the website's session cookie. Every instance has to use the same one."
+  type        = "SecureString"
+  value       = random_password.session_key.result
+
+  lifecycle {
+    # so a hand-rotated key is not put back on the next apply
+    ignore_changes = [value]
+  }
+}
+
 module "observability" {
   source = "../../modules/observability"
 
@@ -71,6 +116,9 @@ module "pipeline" {
   processed_bucket_name = module.buckets.processed_bucket_name
   processed_bucket_arn  = module.buckets.processed_bucket_arn
 
+  submissions_table_name = module.submissions.table_name
+  submissions_table_arn  = module.submissions.table_arn
+
   bedrock_model_id = var.bedrock_model_id
   bedrock_region   = var.bedrock_region
 
@@ -81,6 +129,35 @@ module "pipeline" {
   # so the log group exists with its retention already set, rather than Lambda
   # creating one that keeps logs forever on the first invocation
   depends_on = [module.observability]
+}
+
+module "website" {
+  source = "../../modules/apprunner"
+
+  service_name = "${local.name_prefix}-web"
+  image_uri    = "${module.ecr_web.repository_url}:${var.image_tag}"
+
+  uploads_bucket_name   = module.buckets.uploads_bucket_name
+  uploads_bucket_arn    = module.buckets.uploads_bucket_arn
+  processed_bucket_name = module.buckets.processed_bucket_name
+  processed_bucket_arn  = module.buckets.processed_bucket_arn
+
+  submissions_table_name = module.submissions.table_name
+  submissions_table_arn  = module.submissions.table_arn
+  submissions_index_arn  = module.submissions.index_arn
+
+  secret_key_parameter_name = aws_ssm_parameter.session_key.name
+  secret_key_parameter_arn  = aws_ssm_parameter.session_key.arn
+
+  # the website decides a run has died once this has passed, so it has to agree
+  # with what the pipeline is actually allowed
+  pipeline_timeout_seconds = var.lambda_timeout_seconds
+
+  cpu            = var.web_cpu
+  memory         = var.web_memory
+  min_instances  = var.web_min_instances
+  max_instances  = var.web_max_instances
+  deploy_on_push = var.web_deploy_on_push
 }
 
 module "ci_role" {
