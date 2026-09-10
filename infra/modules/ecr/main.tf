@@ -55,10 +55,10 @@ resource "aws_ecr_lifecycle_policy" "this" {
         rulePriority = 2
         description  = "Keep the most recent tagged images so a rollback is still possible"
         selection = {
-          tagStatus     = "tagged"
+          tagStatus      = "tagged"
           tagPatternList = ["*"]
-          countType     = "imageCountMoreThan"
-          countNumber   = var.tagged_image_retention_count
+          countType      = "imageCountMoreThan"
+          countNumber    = var.tagged_image_retention_count
         }
         action = { type = "expire" }
       },
