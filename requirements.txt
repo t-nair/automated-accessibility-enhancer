@@ -1,7 +1,8 @@
-Flask
+# The pipeline itself. This is the only file the Lambda image installs, so keep
+# it to what z_reorder.py needs to open a deck and describe its pictures.
+#
+# anthropic[bedrock] brings boto3 and botocore with it, which is what signs the
+# Bedrock requests, so neither is listed separately.
 python-pptx
 Pillow
-torch
-transformers
-waitress
-pytest
+anthropic[bedrock]

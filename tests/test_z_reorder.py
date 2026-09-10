@@ -1,7 +1,9 @@
 import os
+import io
 import sys
 import shutil
 import json
+import base64
 
 import pytest
 from pptx import Presentation
@@ -751,3 +753,204 @@ def test_an_unresolvable_shape_type_does_not_raise():
     assert z_reorder.get_shape_type(Unresolvable()) is None
     assert not z_reorder.is_picture(Unresolvable())
     assert not z_reorder.needs_caption(Unresolvable())
+
+
+# --- sending a picture to Claude on Bedrock ----------------------------------
+
+
+class FakeImage:
+    """Stands in for python-pptx's shape.image, which is all the captioner uses."""
+
+    def __init__(self, blob, content_type):
+        self.blob = blob
+        self.content_type = content_type
+
+
+def make_image_bytes(size=(40, 30), image_format="PNG", mode="RGB"):
+    from PIL import Image as PILImage
+
+    buffer = io.BytesIO()
+    PILImage.new(mode, size, "red").save(buffer, format=image_format)
+
+    return buffer.getvalue()
+
+
+def decode_prepared(media_type_and_data):
+    from PIL import Image as PILImage
+
+    media_type, data = media_type_and_data
+
+    return media_type, PILImage.open(io.BytesIO(base64.b64decode(data)))
+
+
+def test_a_supported_image_is_sent_through_untouched():
+    blob = make_image_bytes(image_format="PNG")
+
+    media_type, data = z_reorder.prepare_image_for_caption(FakeImage(blob, "image/png"))
+
+    assert media_type == "image/png"
+    # re-encoding a picture that was already fine would lose quality for nothing
+    assert base64.b64decode(data) == blob
+
+
+def test_a_format_claude_cannot_read_is_converted_to_png():
+    # PowerPoint writes bmp and tiff for pasted screenshots and vector art
+    blob = make_image_bytes(image_format="BMP")
+
+    media_type, picture = decode_prepared(
+        z_reorder.prepare_image_for_caption(FakeImage(blob, "image/bmp")))
+
+    assert media_type == "image/png"
+    assert picture.format == "PNG"
+
+
+def test_a_very_large_picture_is_scaled_down_before_it_is_sent():
+    oversized = z_reorder.MAX_IMAGE_DIMENSION * 2
+    blob = make_image_bytes(size=(oversized, oversized), image_format="PNG")
+
+    media_type, picture = decode_prepared(
+        z_reorder.prepare_image_for_caption(FakeImage(blob, "image/png")))
+
+    assert media_type == "image/png"
+    assert max(picture.size) <= z_reorder.MAX_IMAGE_DIMENSION
+
+
+def test_a_cmyk_picture_does_not_stop_the_pipeline():
+    # PNG cannot hold CMYK, so it has to be converted rather than raising
+    blob = make_image_bytes(image_format="TIFF", mode="CMYK")
+
+    media_type, picture = decode_prepared(
+        z_reorder.prepare_image_for_caption(FakeImage(blob, "image/tiff")))
+
+    assert media_type == "image/png"
+    assert picture.mode in ("RGB", "RGBA")
+
+
+class FakeTextBlock:
+    type = "text"
+
+    def __init__(self, text):
+        self.text = text
+
+
+class FakeUsage:
+    input_tokens = 100
+    output_tokens = 20
+
+
+class FakeResponse:
+    def __init__(self, text="", stop_reason="end_turn", stop_details=None):
+        self.content = [FakeTextBlock(text)] if text else []
+        self.stop_reason = stop_reason
+        self.stop_details = stop_details
+        self.usage = FakeUsage()
+
+
+class FakeBedrockClient:
+    """Records the request and hands back a canned response."""
+
+    def __init__(self, response):
+        self.response = response
+        self.requests = []
+        self.messages = self
+
+    def create(self, **kwargs):
+        self.requests.append(kwargs)
+
+        return self.response
+
+
+@pytest.fixture
+def fake_bedrock(monkeypatch):
+    def use(response):
+        client = FakeBedrockClient(response)
+        # set the cached client directly, so get_caption_client never tries to
+        # import the AWS SDK or resolve credentials
+        monkeypatch.setattr(z_reorder, "caption_client", client)
+
+        return client
+
+    return use
+
+
+class FakePictureShape:
+    name = "Picture 3"
+
+    def __init__(self, image):
+        self.image = image
+
+
+def test_a_caption_comes_back_tidied(fake_bedrock):
+    fake_bedrock(FakeResponse("The image shows a red square."))
+    shape = FakePictureShape(FakeImage(make_image_bytes(), "image/png"))
+
+    assert z_reorder.generate_image_caption(shape) == "A red square."
+
+
+def test_the_request_carries_the_picture_and_the_prompt(fake_bedrock):
+    client = fake_bedrock(FakeResponse("A red square."))
+    shape = FakePictureShape(FakeImage(make_image_bytes(), "image/png"))
+
+    z_reorder.generate_image_caption(shape, "Root Causes of the Uprising")
+
+    sent = client.requests[0]
+
+    assert sent["model"] == z_reorder.CAPTION_MODEL_ID
+
+    image_block, text_block = sent["messages"][0]["content"]
+
+    assert image_block["type"] == "image"
+    assert image_block["source"]["type"] == "base64"
+    assert image_block["source"]["media_type"] == "image/png"
+
+    # the slide's own words go along, because they usually say what the picture
+    # is there to show
+    assert "Root Causes of the Uprising" in text_block["text"]
+
+
+def test_a_refusal_is_not_written_into_the_deck_as_a_description(fake_bedrock):
+    class Refusal:
+        category = "cyber"
+
+    fake_bedrock(FakeResponse("I can't help with that.", "refusal", Refusal()))
+    shape = FakePictureShape(FakeImage(make_image_bytes(), "image/png"))
+
+    with pytest.raises(z_reorder.CaptionRefused):
+        z_reorder.generate_image_caption(shape)
+
+
+def test_an_empty_response_is_treated_as_a_failure(fake_bedrock):
+    fake_bedrock(FakeResponse(""))
+    shape = FakePictureShape(FakeImage(make_image_bytes(), "image/png"))
+
+    with pytest.raises(z_reorder.CaptionRefused):
+        z_reorder.generate_image_caption(shape)
+
+
+def test_tidy_caption_removes_quotes_a_chat_model_wraps_around_it():
+    assert z_reorder.tidy_caption('"A bronze statue on a pedestal"') == "A bronze statue on a pedestal"
+
+
+def test_a_real_deck_goes_through_the_whole_captioning_chain(folders, fake_bedrock):
+    """The other tests replace generate_image_caption outright, so nothing else
+    exercises pulling a picture out of a real deck and preparing it to send."""
+    input_folder, output_folder = folders
+    copy_fixture("issue_missing_alt_text.pptx", input_folder)
+
+    client = fake_bedrock(FakeResponse("A red square on a white background."))
+
+    was_successful, message, steps = z_reorder.process_one_file(
+        "issue_missing_alt_text.pptx", input_folder, output_folder
+    )
+
+    assert was_successful is True
+    assert len(client.requests) == 1
+
+    source = client.requests[0]["messages"][0]["content"][0]["source"]
+
+    assert source["media_type"] in z_reorder.BEDROCK_IMAGE_TYPES
+    assert base64.b64decode(source["data"])
+
+    picture = get_first_picture(os.path.join(output_folder, "issue_missing_alt_text_updated.pptx"))
+
+    assert z_reorder.get_picture_alt_text(picture) == "A red square on a white background."
