@@ -4,3 +4,4 @@ Pillow
 torch
 transformers
 pytest
+-r pipeline/requirements.txt

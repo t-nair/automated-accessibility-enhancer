@@ -1,0 +1,22 @@
+# Virtual environment - never commit this, it is huge and machine specific
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Faculty uploads and processed results - real course materials, keep them off GitHub
+uploads/
+processed/
+pptx_output/
+pptx_input/
+output/
+.venv/
+
+# Runtime data and logs
+data/submissions.json
+pipeline.log
+
+# database and session key are runtime data, not source
+data/submissions.db
+data/secret_key.txt
