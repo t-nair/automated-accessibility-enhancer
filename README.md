@@ -147,7 +147,12 @@ See [the PDF pipeline guide](pipeline/README.md) and [the exact OCR pathway](doc
 python -m pytest tests/ -q
 ```
 
-There are 123 tests. They cover the helper functions, the whole pipeline running against the sample files in `Error Test PPTX`, and every page and route on the website.
+There are 206 PowerPoint, website and AWS storage tests plus 18 focused PDF tests.
+They cover the helper functions, the whole PowerPoint pipeline running against the
+sample files in `Error Test PPTX`, every website page and route, the AWS storage code
+against stand-in S3 and DynamoDB, and the PDF routing, OCR evidence, semantic
+reconstruction, and structure-verification boundaries. The PDF tests need
+`pip install -r requirements-dev.txt`, which brings in the PDF dependencies.
 
 The tests never call Bedrock. They put a stand-in in place of the client, so the
 whole suite runs in a couple of seconds, needs no AWS credentials, and costs

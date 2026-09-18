@@ -2,3 +2,7 @@
 -r requirements-web.txt
 
 pytest
+
+# the PDF pathway, which has its own pinned dependencies. Kept out of
+# requirements.txt because that file is what the Lambda image installs.
+-r pipeline/requirements.txt

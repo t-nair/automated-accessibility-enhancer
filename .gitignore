@@ -17,6 +17,10 @@ pptx_input/
 data/
 pipeline.log
 
+# PDF pathway output, and the environment pipeline/setup.ps1 creates
+output/
+.venv/
+
 # Terraform working directories and provider downloads
 **/.terraform/*
 

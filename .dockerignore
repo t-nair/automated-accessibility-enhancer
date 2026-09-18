@@ -21,6 +21,10 @@ infra/
 Dockerfile
 .dockerignore
 
+# the PDF pathway is command line only, and neither image runs it
+pipeline/
+docs/
+
 # local runtime data
 uploads/
 processed/

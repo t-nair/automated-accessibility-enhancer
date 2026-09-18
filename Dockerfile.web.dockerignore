@@ -25,6 +25,10 @@ Dockerfile.web
 *.dockerignore
 .dockerignore
 
+# the PDF pathway is command line only, and neither image runs it
+pipeline/
+docs/
+
 # local runtime data. The site makes these folders itself if it ever runs with
 # local storage, so a copy from a laptop must never be baked into the image.
 uploads/
