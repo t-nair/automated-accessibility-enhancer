@@ -1,0 +1,39 @@
+# What the website image leaves out. Docker uses this file instead of .dockerignore
+# when building Dockerfile.web, because the two images need opposite things: the
+# plain .dockerignore is written for the pipeline image and leaves out the site.
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+
+# tests and sample decks are for working on the code, not for serving it
+tests/
+generate_test_pptx.py
+Error Test PPTX/
+requirements-dev.txt
+
+# the pipeline runs in Lambda on AWS, so its entry point is not needed here
+lambda_handler.py
+
+# infrastructure code describes the services, it does not run inside them
+infra/
+Dockerfile
+Dockerfile.web
+*.dockerignore
+.dockerignore
+
+# local runtime data. The site makes these folders itself if it ever runs with
+# local storage, so a copy from a laptop must never be baked into the image.
+uploads/
+processed/
+pptx_input/
+pptx_output/
+data/
+pipeline.log
+*.md
+*.txt
+!requirements.txt
+!requirements-web.txt

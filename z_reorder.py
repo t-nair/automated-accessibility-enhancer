@@ -11,11 +11,23 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from PIL import Image
 
-logging.basicConfig(
-    filename="pipeline.log",
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
+
+# On a laptop the log goes to pipeline.log. In a container it has to go to the
+# console instead, because App Runner and Lambda only collect what a container
+# prints: a log file inside one is never seen by anybody. The Dockerfiles set
+# LOG_FILE to nothing for that reason.
+LOG_FILE = os.environ.get("LOG_FILE", "pipeline.log")
+
+if LOG_FILE:
+    try:
+        logging.basicConfig(filename=LOG_FILE, level=logging.INFO, format=LOG_FORMAT)
+    except OSError:
+        # a read-only folder, which is what Lambda gives the code, must not stop
+        # the pipeline from starting just because it cannot keep a log file
+        logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+else:
+    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 
 # these libraries log every network request at INFO level, which just buries our own log lines
 logging.getLogger("httpx").setLevel(logging.WARNING)
