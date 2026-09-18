@@ -21,6 +21,10 @@ COPY static/ static/
 ENV PORT=8080
 EXPOSE 8080
 
+# log to the console rather than a file, because the console is the only thing
+# AWS collects from a container
+ENV LOG_FILE=
+
 # waitress rather than Flask's own server, which says plainly that it is not
 # meant to face the internet. gunicorn is the usual choice but does not run on
 # Windows, and this has to be runnable on a laptop too.
