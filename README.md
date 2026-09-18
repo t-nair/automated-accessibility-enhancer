@@ -116,6 +116,31 @@ The results are written to `pptx_output`.
 
 ---
 
+## Running the PDF decision pipeline
+
+PDF processing is a separate command-line pathway; the existing PowerPoint
+workflow and website remain unchanged. The PDF pathway inspects every page and
+routes it as digital, scanned, hybrid, or uncertain. Digital text can be rebuilt
+semantically. Scanned and hybrid pages use local English OCR and are always
+marked for human review. Uncertain pages, signed or encrypted files, and digital
+pages with images stop for review instead of guessing.
+
+On Windows, the reproducible setup is:
+
+```powershell
+./pipeline/setup.ps1 -Python python
+./.venv/Scripts/python.exe -m pipeline.cli "input.pdf" --output-dir output/remediation
+```
+
+Chrome, Chromium, or Edge is required to export the tagged companion PDF. Set
+`PDF_PIPELINE_CHROME` when the browser is not in a standard location or on
+`PATH`. The command never overwrites the source. It writes an accessible HTML
+companion, a tagged PDF reconstruction, and a JSON evidence manifest.
+
+See [the PDF pipeline guide](pipeline/README.md) and [the exact OCR pathway](docs/OCR_PATHWAY.md).
+
+---
+
 ## Running the tests
 
 ```
@@ -160,6 +185,16 @@ static/
 tests/
     test_z_reorder.py   pipeline tests
     test_app.py         website tests
+    test_pdf_*.py       PDF routing, OCR, reconstruction, and verification tests
+
+pipeline/               the PDF pathway, separate from the PowerPoint one
+    cli.py              PDF command-line entry point
+    inspect_pdf.py      deterministic page inspection and routing
+    ocr.py              offline OCR for scanned and hybrid pages
+    rebuild_html.py     semantic reconstruction
+    chrome_pdf.py       tagged PDF export and browser discovery
+
+docs/                   how the PDF pathway decides what to do with each page
 
 Error Test PPTX/        sample files, both broken and valid
 uploads/                files as they are uploaded
@@ -187,7 +222,7 @@ JSON file is left alone.
 ---
 
 ## Possible Improvements
-- **PDF support**, which is the most common format after PowerPoint
+- **Broader PDF remediation**, especially tables, figures, mathematical notation, and uncertain pages
 - **Real accounts**, or university sign-in, instead of the cookie the site uses now
 - **Configurable rules** for heading detection and structure inference
 - **Integration into automation platforms** (e.g. self-hosted workflow engines)
