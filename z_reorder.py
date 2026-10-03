@@ -76,9 +76,12 @@ CAPTION_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-opus-5")
 # region is its own variable. It matters because the Messages API endpoint on
 # Bedrock is served in a subset of regions, which need not include the one the
 # function happens to run in.
+# us-east-1 because that is where the endpoint actually answers. Asking us-west-2
+# or us-east-2 for a model it serves comes back "the model does not exist", while
+# us-east-1 answers properly, so the fallback has to be the region that works
+# rather than the one the rest of the project runs in.
 CAPTION_REGION = (os.environ.get("BEDROCK_REGION")
-                  or os.environ.get("AWS_REGION")
-                  or "us-west-2")
+                  or "us-east-1")
 
 # the model is told once, here, what kind of description we want. Faculty never see
 # or type this, it is just how we ask for a caption that works as alt text.
