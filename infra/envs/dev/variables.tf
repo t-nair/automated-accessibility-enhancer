@@ -58,9 +58,9 @@ variable "bedrock_model_id" {
 }
 
 variable "bedrock_region" {
-  description = "Region Bedrock requests go to. Has to serve the bedrock-mantle endpoint."
+  description = "Region Bedrock requests go to. Has to serve the bedrock-mantle endpoint, which us-east-1 does and us-west-2 and us-east-2 do not."
   type        = string
-  default     = "us-west-2"
+  default     = "us-east-1"
 }
 
 # --- function sizing ---
