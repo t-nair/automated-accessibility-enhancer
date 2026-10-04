@@ -4,11 +4,12 @@ import shutil
 
 import pytest
 from pptx import Presentation
-from pptx.util import Inches
+from pptx.util import Inches, Pt
 
 # make sure the tests can import the project files from the folder above
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import title_detection
 import z_reorder
 
 FIXTURE_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Error Test PPTX")
@@ -404,6 +405,66 @@ def test_a_real_title_placeholder_is_found_even_when_renamed():
     title.name = "Header"
 
     assert z_reorder.is_title(title)
+
+
+# --- titles that are not marked as titles --------------------------------------
+
+BODY_TEXT = ("Evaporation, condensation and precipitation move water between the oceans, "
+             "the air and the land, and the cycle repeats continuously.")
+
+
+def build_text_slide(boxes):
+    """A blank slide with plain text boxes given as (name, text, top in inches, font size), in z-order."""
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    for name, text, top, size in boxes:
+        box = slide.shapes.add_textbox(Inches(0.7), Inches(top), Inches(8.6), Inches(1))
+        box.name = name
+        box.text_frame.text = text
+        box.text_frame.paragraphs[0].runs[0].font.size = Pt(size)
+
+    return slide
+
+
+def test_a_title_typed_into_a_text_box_is_found_and_moved_to_the_front():
+    # nothing here says "title": not the placeholder type, not the shape name
+    slide = build_text_slide([("Body", BODY_TEXT, 2.5, 18), ("TextBox 7", "The Water Cycle", 0.4, 40)])
+
+    assert z_reorder.move_titles_to_front(slide) == 1
+    assert names_in_order(slide) == ["TextBox 7", "Body"]
+
+
+def test_a_title_below_a_small_kicker_line_is_still_found():
+    slide = build_text_slide([("Body", BODY_TEXT, 3.0, 18),
+                              ("Kicker", "CHAPTER 3", 0.2, 12),
+                              ("Heading", "Evaporation and Rain", 0.7, 36)])
+
+    z_reorder.move_titles_to_front(slide)
+
+    assert names_in_order(slide)[0] == "Heading"
+
+
+def test_a_real_title_is_never_second_guessed(monkeypatch):
+    monkeypatch.setattr(z_reorder, "guess_title", lambda slide: pytest.fail("guess_title was called"))
+    slide = build_slide(["Body 1", "Title 1"])
+
+    assert z_reorder.move_titles_to_front(slide) == 1
+
+
+def test_a_slide_of_only_body_paragraphs_gets_no_guessed_title():
+    slide = build_text_slide([("A", BODY_TEXT, 1.0, 18), ("B", BODY_TEXT, 3.5, 18)])
+
+    assert z_reorder.move_titles_to_front(slide) == 0
+    assert names_in_order(slide) == ["A", "B"]
+
+
+def test_a_missing_title_model_leaves_the_slide_alone(monkeypatch):
+    monkeypatch.setattr(title_detection, "_model", False)
+    slide = build_text_slide([("Body", BODY_TEXT, 2.5, 18), ("TextBox 7", "The Water Cycle", 0.4, 40)])
+
+    assert z_reorder.move_titles_to_front(slide) == 0
+    assert names_in_order(slide) == ["Body", "TextBox 7"]
 
 
 # --- alt text that is not really alt text ------------------------------------

@@ -3,4 +3,6 @@ python-pptx
 Pillow
 torch
 transformers
+# title_model.joblib is a pickled scikit-learn model, so the version must match the one that trained it
+scikit-learn~=1.8.0
 pytest

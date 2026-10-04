@@ -18,7 +18,7 @@ What happens to a file after it is uploaded:
 
 1. The file is saved and added to a queue
 2. If it is an older `.ppt`, LibreOffice converts it to `.pptx` first
-3. Each slide is checked, and any shape named "Title" is moved to the front of the reading order
+3. Each slide is checked, and its title is moved to the front of the reading order. A real title placeholder (or a shape named "Title") is used when there is one. Otherwise `title_detection.py` guesses which text box is the title from its size, position and wording (see `title_research/README.md`)
 4. Every picture without alt text is described by a vision model, and the description is written into the file
 5. An updated `.pptx` and a report are written to the output folder
 
@@ -117,6 +117,9 @@ python generate_test_pptx.py
 ```
 app.py                  the website: uploading, status, reports, downloads
 z_reorder.py            the pipeline: converting, fixing titles, writing descriptions
+title_detection.py      finds the title of a slide that has no real title placeholder
+title_model.joblib      the small trained model title_detection.py uses
+title_research/         how the title model was chosen: data, experiments, results
 generate_test_pptx.py   makes the sample files used by the tests
 
 templates/
