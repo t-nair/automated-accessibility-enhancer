@@ -50,6 +50,7 @@ Every PR must explain how it was tested.
 
 - Include a short **How I tested this** section in the PR
 - Use only synthetic PowerPoint decks
+- Tests run automatically on every PR and push to `main` (`.github/workflows/ci.yml`)
 
 ---
 

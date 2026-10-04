@@ -104,6 +104,8 @@ There are 74 tests. They cover the helper functions, the whole pipeline running 
 
 The tests replace the image description model with a stand-in, so they finish in about a second instead of several minutes. Most of the time you see when running them is Python loading PyTorch, not the tests themselves. The tests use temporary folders, so running them never touches real uploads or the submissions file.
 
+GitHub Actions runs these tests on every pull request (`.github/workflows/ci.yml`). The tests stub out the model, so CI never downloads it, but it still installs PyTorch and Transformers because `z_reorder.py` imports them. Not covered yet: a test that runs the real model, and any deployment step. Add a deploy workflow once there is a hosting target.
+
 To make more sample files to test with:
 
 ```
