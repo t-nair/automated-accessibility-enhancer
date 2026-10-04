@@ -501,3 +501,20 @@ def test_an_unresolvable_shape_type_does_not_raise():
     assert z_reorder.get_shape_type(Unresolvable()) is None
     assert not z_reorder.is_picture(Unresolvable())
     assert not z_reorder.needs_caption(Unresolvable())
+
+
+def test_a_whole_folder_is_processed_in_one_run(folders, fake_captions):
+    input_folder, output_folder = folders
+    for filename in WORKING_FILES + BROKEN_FILES:
+        copy_fixture(filename, input_folder)
+
+    z_reorder.accessibility_processor(input_folder, output_folder)
+
+    for filename in WORKING_FILES:
+        assert os.path.exists(os.path.join(output_folder, filename.replace(".pptx", "_updated.pptx")))
+
+    for filename in BROKEN_FILES:
+        assert not os.path.exists(os.path.join(output_folder, filename.replace(".pptx", "_updated.pptx")))
+
+    prs = Presentation(os.path.join(output_folder, "issue_title_not_first_in_order_updated.pptx"))
+    assert [shape.name for shape in prs.slides[0].shapes] == ["Title 1", "Body Text 1"]
