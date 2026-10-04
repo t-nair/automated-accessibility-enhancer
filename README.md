@@ -18,8 +18,8 @@ What happens to a file after it is uploaded:
 
 1. The file is saved and added to a queue
 2. If it is an older `.ppt`, LibreOffice converts it to `.pptx` first
-3. Each slide is checked, and any shape named "Title" is moved to the front of the reading order
-4. Every picture without alt text is described by a vision model, and the description is written into the file
+3. Each slide is checked, and its title shapes are moved to the front of the reading order. A shape counts as a title if it is a real title placeholder, or if its name contains "title" in any capitalisation (subtitles are left alone). Running a file a second time changes nothing
+4. Every picture without usable alt text is described by a vision model, and the description is written into the file. Alt text that is just a filename (`photo.png`) or PowerPoint's own name for the picture (`Picture 3`) counts as missing. Alt text a person wrote is never overwritten
 5. An updated `.pptx` and a report are written to the output folder
 
 ---
@@ -100,7 +100,7 @@ The results are written to `pptx_output`.
 python -m pytest tests/ -q
 ```
 
-There are 74 tests. They cover the helper functions, the whole pipeline running against the sample files in `Error Test PPTX`, and every page and route on the website.
+There are 114 tests. They cover the helper functions (title detection, reading order, placeholder alt text), the whole pipeline running against the sample files in `Error Test PPTX`, processing a whole folder in one run, and every page and route on the website.
 
 The tests replace the image description model with a stand-in, so they finish in about a second instead of several minutes. Most of the time you see when running them is Python loading PyTorch, not the tests themselves. The tests use temporary folders, so running them never touches real uploads or the submissions file.
 
@@ -138,6 +138,9 @@ processed/              finished files and reports
 data/submissions.db     the list of submissions (SQLite)
 data/secret_key.txt     used to sign the visitor cookie
 pipeline.log            what happened, including every failure
+
+pptx_input/             folder the script reads (you create it)
+pptx_output/            where the script writes fixed files and reports
 ```
 
 The database is made automatically the first time the app runs. If an older
