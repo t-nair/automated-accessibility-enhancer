@@ -42,7 +42,9 @@ def _ph_chain(shape):
         for ph in master.placeholders:
             if ph.placeholder_format.type == shape.placeholder_format.type:
                 chain.append(ph._element)
-        chain.append(master._element.find(qn("p:txStyles")))
+        tx_styles = master._element.find(qn("p:txStyles"))
+        if tx_styles is not None:
+            chain.append(tx_styles)
     except Exception:
         pass
     return chain
