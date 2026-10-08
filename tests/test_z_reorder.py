@@ -459,6 +459,16 @@ def test_a_slide_of_only_body_paragraphs_gets_no_guessed_title():
     assert names_in_order(slide) == ["A", "B"]
 
 
+def test_a_master_without_text_styles_does_not_break_font_size_lookup():
+    # p:txStyles is optional; a placeholder with no size anywhere used to hit None.tag
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    master = slide.part.slide_layout.slide_master._element
+    master.remove(master.find(title_detection.qn("p:txStyles")))
+
+    assert title_detection.effective_pt(slide.shapes.title) == title_detection.DEFAULT_PT
+
+
 def test_a_missing_title_model_leaves_the_slide_alone(monkeypatch):
     monkeypatch.setattr(title_detection, "_model", False)
     slide = build_text_slide([("Body", BODY_TEXT, 2.5, 18), ("TextBox 7", "The Water Cycle", 0.4, 40)])
