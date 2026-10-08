@@ -9,6 +9,7 @@ import torch
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from PIL import Image
+from title_detection import guess_title
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 
 logging.basicConfig(
@@ -503,6 +504,12 @@ def move_titles_to_front(slide):
     """
     shapes = list(slide.shapes)
     titles = [shape for shape in shapes if is_title(shape)]
+
+    if not titles:
+        # no title placeholder and no shape named "title", so the author probably typed the
+        # title into a text box or a body placeholder. Ask the model which shape reads like one.
+        guess = guess_title(slide)
+        titles = [shape for shape in shapes if guess is not None and shape._element is guess._element]
 
     if not titles:
         return 0
