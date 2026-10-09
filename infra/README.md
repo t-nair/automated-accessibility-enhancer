@@ -4,8 +4,9 @@ Terraform for running the pipeline on AWS: a deck is uploaded to S3, a Lambda
 picks it up, fixes the reading order and writes descriptions for the pictures
 using Claude on Bedrock, and puts the result in a second bucket.
 
-This is the deployment side of the project. The Flask app in the repository root
-still runs on a laptop and is unaffected by any of it.
+This is the deployment side of the project. The same Flask app runs either way:
+on a laptop it keeps submissions in a sqlite file and does the work in a thread,
+and on AWS it keeps them in DynamoDB and leaves the work to the Lambda.
 
 ---
 
@@ -15,7 +16,9 @@ still runs on a laptop and is unaffected by any of it.
 |---|---|
 | `bootstrap/` | The S3 bucket that holds Terraform's own state. Run once per AWS account. |
 | `modules/s3_buckets` | The uploads and processed buckets, both with lifecycle expiry. |
-| `modules/ecr` | The registry the pipeline container image is pushed to. |
+| `modules/ecr` | The registries the two container images are pushed to, one each for the pipeline and the website. |
+| `modules/dynamodb` | The table of submissions, which replaces the sqlite file the local version uses. |
+| `modules/apprunner` | The website itself, and the permissions it runs with. |
 | `modules/lambda` | The function, its execution role, and the S3 trigger. |
 | `modules/observability` | Log group with a retention period, an SNS topic, and four alarms. |
 | `modules/github_oidc` | A role GitHub Actions assumes to run `terraform plan` without an access key. |
@@ -37,9 +40,12 @@ periods are variables if they turn out to be wrong.
   replaced the separate DynamoDB lock table, and needs 1.11.
 - AWS credentials with permission to create the resources above.
 - Docker, to build the Lambda image.
-- Bedrock model access enabled for the Claude model you plan to use. This is a
-  per-account, per-model switch in the AWS console under **Bedrock → Model
-  access**, and nothing works until it is on.
+- Bedrock working for the account. The Model access page has been retired, and
+  models now enable themselves when first used, but Anthropic ones need a use
+  case form submitting once, and a new account can be left with every Bedrock
+  quota applied at 0, which throttles the first request. Both are worth
+  confirming before deploying, because neither shows up until a caption is
+  attempted. `aws bedrock-runtime converse` is the quickest way to check.
 
 ---
 
@@ -73,17 +79,17 @@ cp terraform.tfvars.example terraform.tfvars
 Fill in `terraform.tfvars`. It is gitignored, so real values stay out of the
 repository.
 
-### 3. Create the registry first
+### 3. Create the registries first
 
-Lambda cannot be created pointing at an image that does not exist yet, so the
-registry and the image come before everything else:
+Lambda and App Runner cannot be created pointing at images that do not exist
+yet, so the registries and the images come before everything else:
 
 ```bash
 terraform init
-terraform apply -target=module.ecr
+terraform apply -target=module.ecr -target=module.ecr_web
 ```
 
-### 4. Build and push the image
+### 4. Build and push the images
 
 From the repository root, with `<account>`, `<region>` and `<repo>` taken from
 the `ecr_repository_url` output:
@@ -100,6 +106,21 @@ docker build --platform linux/amd64 -t <account>.dkr.ecr.<region>.amazonaws.com/
 docker push <account>.dkr.ecr.<region>.amazonaws.com/<repo>:latest
 ```
 
+Then the website image, from `web_repository_url`, which is a second repository
+and a second Dockerfile:
+
+```bash
+docker build --platform linux/amd64 -t <account>.dkr.ecr.<region>.amazonaws.com/<web-repo>:latest -f Dockerfile.web .
+```
+
+```bash
+docker push <account>.dkr.ecr.<region>.amazonaws.com/<web-repo>:latest
+```
+
+The two images carry opposite things on purpose: the pipeline one has
+LibreOffice, for converting an older `.ppt`, and the website one has Flask and
+the pages.
+
 `--platform linux/amd64` matters. Building on an Apple Silicon machine without
 it produces an arm64 image, which Lambda will refuse unless
 `lambda_architecture` is set to `arm64` to match.
@@ -110,7 +131,14 @@ it produces an arm64 image, which Lambda will refuse unless
 terraform apply
 ```
 
-### 6. Try it
+### 6. Open the site
+
+`terraform output website_url` is the address App Runner serves it on, with its
+own HTTPS certificate. Uploading a deck there exercises the whole thing: the
+site puts it in the uploads bucket, the bucket starts the Lambda, the Lambda
+writes its progress to the table, and the page follows along.
+
+### 7. Try the pipeline on its own
 
 ```bash
 aws s3 cp "Error Test PPTX/issue_missing_alt_text.pptx" s3://<uploads_bucket>/test/
