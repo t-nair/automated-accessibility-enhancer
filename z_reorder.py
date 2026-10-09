@@ -614,6 +614,80 @@ def find_vague_links(slide):
     return found
 
 
+# words that stay lowercase in a headline, so they do not count against one
+SMALL_WORDS = ("a", "an", "and", "as", "at", "by", "for", "from", "in", "of",
+               "on", "or", "the", "to", "with")
+
+# alt text starting with one of these is somebody describing a picture, even when
+# it is capitalised throughout, as "Portrait of Marie Curie" is
+DESCRIPTION_STARTERS = ("chart", "diagram", "drawing", "graph", "illustration",
+                        "image", "map", "photo", "photograph", "picture",
+                        "portrait", "screenshot", "table")
+
+
+# A picture copied from a web page often brings the page's title along as its alt
+# text. That reads like a real description, so we must not replace it: somebody
+# may have written it. Pointing it out is safe, and the person who made the slide
+# can tell in a second whether it describes the picture or names an article.
+#
+# Only the shape of the writing is used. Treating a picture that is also a link as
+# evidence seemed sensible and was not: run across 518 pictures in real decks, it
+# wrongly flagged four captions on linked images and found nothing the wording did
+# not already catch.
+def looks_like_a_page_title(alt_text):
+    words = alt_text.strip().split()
+
+    if len(words) < 3 or len(words) > 14:
+        return False
+
+    # a description tends to end in a full stop; a headline does not
+    if alt_text.strip()[-1] in ".!?":
+        return False
+
+    # a headline is one phrase. A comma usually means somebody naming a thing and
+    # then saying what it is, as in "Salvador Allende, Chilean President".
+    if "," in alt_text:
+        return False
+
+    if words[0].lower().strip(".,:;") in DESCRIPTION_STARTERS:
+        return False
+
+    capitalised = 0
+    counted = 0
+
+    for word in words:
+        if word.lower() in SMALL_WORDS:
+            continue
+
+        counted += 1
+
+        if word[0].isupper():
+            capitalised += 1
+
+    # Title Case, the way headlines are written rather than sentences. Four words
+    # rather than three, because three capitalised words is just as likely to be a
+    # short caption carrying a name, as in "Portrait of Marie Curie".
+    return counted >= 4 and capitalised == counted
+
+
+def find_copied_descriptions(slide):
+    found = []
+
+    for shape in slide.shapes:
+        if not is_picture(shape):
+            continue
+
+        alt_text = (get_picture_alt_text(shape) or "").strip()
+
+        if not alt_text or looks_like_junk_alt_text(alt_text, shape.name):
+            continue
+
+        if looks_like_a_page_title(alt_text):
+            found.append((shape.name, alt_text))
+
+    return found
+
+
 def find_tables_without_a_header(slide):
     found = []
 
@@ -751,6 +825,13 @@ def find_slide_problems(slide, slide_number, title, seen_titles, slide_width=Non
             "slide": slide_number,
             "kind": "unclear link",
             "detail": f"The link says \"{link_text}\", which does not say where it goes.",
+        })
+
+    for shape_name, alt_text in find_copied_descriptions(slide):
+        problems.append({
+            "slide": slide_number,
+            "kind": "copied description",
+            "detail": f"The description on {shape_name} reads like the title of a web page rather than a description of the picture: \"{alt_text}\". We left it alone in case you wrote it. Please check it says what the picture shows.",
         })
 
     for table_name in find_tables_without_a_header(slide):
