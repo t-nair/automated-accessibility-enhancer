@@ -317,6 +317,44 @@ def test_a_title_added_last_is_moved_and_not_reported():
     assert z_reorder.find_reading_order_problem(slide) is None
 
 
+def test_a_page_title_left_on_a_picture_is_spotted():
+    # the real one that started this: a page title that came along with the image
+    assert z_reorder.looks_like_a_page_title("Types of Wind Turbines Explained") is True
+    assert z_reorder.looks_like_a_page_title("How Electric Motors Actually Work") is True
+
+
+def test_a_description_somebody_wrote_is_left_alone():
+    for written in (
+        "A diagram of a transformer showing primary and secondary coils.",
+        "Graph showing current against time",
+        "Diagram of the Carnot Cycle",
+        "Photograph of the Hoover Dam Spillway",
+    ):
+        assert z_reorder.looks_like_a_page_title(written) is False, written
+
+
+def test_a_caption_carrying_a_name_is_left_alone():
+    # these are Title Case only because they contain names, and flagging them
+    # was the mistake that showed up when this was run over real decks
+    assert z_reorder.looks_like_a_page_title("Portrait of Marie Curie") is False
+    assert z_reorder.looks_like_a_page_title("Salvador Allende, Chilean President") is False
+    assert z_reorder.looks_like_a_page_title("Map of North America") is False
+
+
+def test_the_picture_keeps_its_description_and_is_only_reported():
+    prs, slide = make_slide_with_shapes()
+    picture = slide.shapes.add_picture(io.BytesIO(make_image_bytes()), Inches(1), Inches(1), Inches(2), Inches(2))
+    picture.name = "Picture 5"
+    z_reorder.set_picture_alt_text(picture, "Types of Wind Turbines Explained")
+
+    found = z_reorder.find_copied_descriptions(slide)
+
+    assert len(found) == 1
+    assert found[0][0] == "Picture 5"
+    # the description itself must still be there, because somebody may have written it
+    assert z_reorder.get_picture_alt_text(picture) == "Types of Wind Turbines Explained"
+
+
 def test_a_slide_with_speaker_notes_is_spotted():
     prs, slide = make_slide_with_shapes()
     slide.notes_slide.notes_text_frame.text = "Remember to mention the deadline"
