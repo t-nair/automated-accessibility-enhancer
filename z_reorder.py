@@ -68,9 +68,11 @@ TITLE_PLACEHOLDERS = (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
 # no 4.4 GB download on first use, no GPU to find, and a cold start is just the
 # container coming up.
 #
-# Model IDs on Bedrock carry an "anthropic." prefix. A first-party id like
-# "claude-opus-5" is rejected there.
-CAPTION_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-opus-5")
+# Model ids here are inference profiles: "us." in front of the model name, and a
+# version on the end. The short form, "anthropic.claude-opus-5", belongs to the
+# newer Messages API endpoint, which this account is not entitled to use, while
+# this one is what the ordinary Bedrock endpoint answers to.
+CAPTION_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 
 # Lambda sets AWS_REGION itself and will not let it be overridden, so the Bedrock
 # region is its own variable. It matters because the Messages API endpoint on
@@ -108,9 +110,11 @@ SLIDE_CONTEXT_MAX_CHARS = 400
 # than save anything, since only tokens actually produced are billed.
 CAPTION_MAX_TOKENS = 2000
 
-# describing a picture is not a hard reasoning problem, and the low setting keeps
-# both the wait and the cost per image down
-CAPTION_EFFORT = "low"
+# Describing a picture is not a hard reasoning problem, so a low effort setting
+# keeps both the wait and the cost per image down. Only models that think before
+# answering take the setting at all, and the ones reachable here refuse the whole
+# request when it is sent, so it goes out only when it is asked for.
+CAPTION_EFFORT = os.environ.get("BEDROCK_EFFORT", "")
 
 # what Claude accepts directly. A slide can also hold emf, wmf, bmp or tiff,
 # which PowerPoint produces for pasted vector art and screenshots, so anything
@@ -146,11 +150,11 @@ def get_caption_client():
     if caption_client is None:
         # imported here rather than at the top so that the pipeline can be
         # imported, and the tests run, without the AWS SDK installed
-        from anthropic import AnthropicBedrockMantle
+        from anthropic import AnthropicBedrock
 
         logging.info(f"Captioning with {CAPTION_MODEL_ID} on Bedrock in {CAPTION_REGION}.")
 
-        caption_client = AnthropicBedrockMantle(
+        caption_client = AnthropicBedrock(
             aws_region=CAPTION_REGION,
             max_retries=CAPTION_MAX_RETRIES,
         )
@@ -283,11 +287,10 @@ def generate_image_caption(shape, slide_text=""):
 
     start_time = time.perf_counter()
 
-    response = client.messages.create(
-        model=CAPTION_MODEL_ID,
-        max_tokens=CAPTION_MAX_TOKENS,
-        output_config={"effort": CAPTION_EFFORT},
-        messages=[{
+    arguments = {
+        "model": CAPTION_MODEL_ID,
+        "max_tokens": CAPTION_MAX_TOKENS,
+        "messages": [{
             "role": "user",
             "content": [
                 {
@@ -301,7 +304,12 @@ def generate_image_caption(shape, slide_text=""):
                 {"type": "text", "text": prompt},
             ],
         }],
-    )
+    }
+
+    if CAPTION_EFFORT:
+        arguments["output_config"] = {"effort": CAPTION_EFFORT}
+
+    response = client.messages.create(**arguments)
 
     seconds_taken = time.perf_counter() - start_time
 
