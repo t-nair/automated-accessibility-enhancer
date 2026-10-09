@@ -11,9 +11,9 @@ variable "environment" {
 }
 
 variable "aws_region" {
-  description = "Region everything is created in."
+  description = "Region everything is created in. us-east-1 by default so that it matches the Bedrock region and image bytes never cross between regions."
   type        = string
-  default     = "us-west-2"
+  default     = "us-east-1"
 }
 
 variable "state_bucket_name" {
