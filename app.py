@@ -286,8 +286,6 @@ def read_report(report_text):
     already_had = 0
     no_description = 0
     words = 0
-    busiest_slide = None
-    busiest_words = 0
 
     def slide_entry(number):
         if number not in slides_by_number:
@@ -325,14 +323,8 @@ def read_report(report_text):
 
     slides.sort(key=lambda slide: slide["number"])
 
-    # the busiest slide is worth pointing at, because a wall of text is hard to
-    # follow whether you are listening to it or reading it
     for slide in slides:
         words += slide["words"]
-
-        if slide["words"] > busiest_words:
-            busiest_words = slide["words"]
-            busiest_slide = slide["number"]
 
     words_per_slide = 0
 
@@ -349,8 +341,6 @@ def read_report(report_text):
         "reading_level": report.get("reading_level"),
         "words": words,
         "words_per_slide": words_per_slide,
-        "busiest_slide": busiest_slide,
-        "busiest_words": busiest_words,
     }
 
     return slides, totals

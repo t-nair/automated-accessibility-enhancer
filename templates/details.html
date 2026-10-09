@@ -135,35 +135,13 @@
                 <section class="tab-panel" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
                     <h4>General overview</h4>
 
-                    {% if totals.reading_level %}
-                        <p class="reading-level">
-                            The words on these slides read at about a
-                            <strong>grade {{ totals.reading_level }}</strong> level.
-                        </p>
-                    {% endif %}
-
-                    <ul class="stat-grid">
-                        <li class="stat">
-                            <span class="stat-number">{{ totals.slides }}</span>
-                            <span class="stat-label">slides</span>
-                        </li>
-                        <li class="stat">
-                            <span class="stat-number">{{ totals.described }}</span>
-                            <span class="stat-label">images we described</span>
-                        </li>
-                        <li class="stat">
-                            <span class="stat-number">{{ totals.already_had }}</span>
-                            <span class="stat-label">images that already had a description</span>
-                        </li>
-                        <li class="stat">
-                            <span class="stat-number">{{ totals.words_per_slide }}</span>
-                            <span class="stat-label">words per slide on average</span>
-                        </li>
-                        {% if totals.busiest_slide %}
-                            <li class="stat">
-                                <span class="stat-number">{{ totals.busiest_words }}</span>
-                                <span class="stat-label">words on slide {{ totals.busiest_slide }}, the busiest one</span>
-                            </li>
+                    <ul class="overview-list">
+                        <li><strong>{{ totals.slides }}</strong> slides</li>
+                        <li><strong>{{ totals.described }}</strong> images we described</li>
+                        <li><strong>{{ totals.already_had }}</strong> images that already had a description</li>
+                        <li><strong>{{ totals.words_per_slide }}</strong> words per slide on average</li>
+                        {% if totals.reading_level %}
+                            <li>The words on these slides read at about a <strong>grade {{ totals.reading_level }}</strong> level</li>
                         {% endif %}
                     </ul>
                 </section>
