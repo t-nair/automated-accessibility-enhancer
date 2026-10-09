@@ -5,16 +5,19 @@ state_bucket_name = "aae-tfstate-CHANGE-ME"
 
 project     = "aae"
 environment = "dev"
-aws_region  = "us-west-2"
+aws_region  = "us-east-1"
 
 # Set this to the tag you pushed to ECR. "latest" works to start with, but
 # pinning a build number is what makes a rollback possible.
 image_tag = "latest"
 
-# Only regions serving the bedrock-mantle endpoint work here: us-east-1,
-# us-east-2, us-west-2, eu-west-1, eu-central-1, ap-northeast-1 and others.
-bedrock_region   = "us-west-2"
-bedrock_model_id = "anthropic.claude-opus-5"
+# us-east-1 is where captioning was proven to work. Asking us-west-2 or
+# us-east-2 for one of these models answers "the model does not exist".
+bedrock_region = "us-east-1"
+
+# An inference profile id: "us." in front, and a version on the end. The short
+# form belongs to a different Bedrock endpoint and is rejected here.
+bedrock_model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 # How long real course material sits in S3.
 uploads_expiration_days   = 7
