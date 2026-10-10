@@ -4,6 +4,7 @@ import uuid
 import queue
 import sqlite3
 import logging
+import time
 import threading
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, jsonify, session
@@ -283,6 +284,8 @@ def process_one_submission(submission_id, saved_name):
     def update_progress(captions_done, total_to_caption):
         processing_progress[submission_id] = {"done": captions_done, "total": total_to_caption}
 
+    logging.info(f"Submission {submission_id}: processing {saved_name} (queue depth {work_queue.qsize()}).")
+    started_at = time.perf_counter()
     update_progress(0, 0)
     set_submission_status(submission_id, "processing")
 
@@ -291,7 +294,9 @@ def process_one_submission(submission_id, saved_name):
     )
 
     if not was_successful:
-        logging.error(f"Submission {submission_id} ({saved_name}) failed processing: {error_message}")
+        logging.error(f"Submission {submission_id} ({saved_name}) failed processing: {error_message} Steps shown to user: {error_steps}")
+    else:
+        logging.info(f"Submission {submission_id} ({saved_name}) finished in {time.perf_counter() - started_at:.1f}s.")
 
     if was_successful:
         alt_text_filename = os.path.splitext(saved_name)[0] + "_alt_text"
@@ -316,8 +321,15 @@ def worker_loop():
             process_one_submission(submission_id, saved_name)
         except Exception as e:
             # a crash here must not kill the worker, or nothing else would ever process
-            logging.error(f"Unexpected problem while processing submission {submission_id}. Error: {e}")
-            set_submission_status(submission_id, "error")
+            logging.exception(f"Unexpected problem while processing submission {submission_id}. Error: {e}")
+            processing_progress.pop(submission_id, None)
+
+            # without a message the page would show an error with no explanation
+            update_submission(submission_id, {
+                "status": "error",
+                "error_message": "Something unexpected went wrong while processing this file.",
+                "error_steps": ["Please try again. If it keeps failing, contact the accessibility team."],
+            })
 
         work_queue.task_done()
 
@@ -370,6 +382,8 @@ def save_one_upload(uploaded_file):
         "retry_count": 0,
         "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M")
     })
+
+    logging.info(f"Upload accepted: {filename} saved as {saved_name} (submission {submission_id}).")
 
     # the pipeline can take a while, so files are queued and worked through in the
     # background instead of making the browser wait
@@ -469,6 +483,7 @@ def retry_submission(submission_id):
     submission = get_my_submission(submission_id)
 
     if submission is None:
+        logging.warning(f"Retry requested for a submission that is unknown or belongs to someone else: {submission_id}")
         flash("That submission could not be found, so it cannot be retried.")
         return redirect(url_for("status"))
     if submission["status"] != "error":
@@ -477,6 +492,7 @@ def retry_submission(submission_id):
 
     filename = submission["saved_filename"]
     if not os.path.exists(os.path.join(UPLOAD_FOLDER, filename)):
+        logging.error(f"Retry of submission {submission_id} impossible: {filename} is gone from {UPLOAD_FOLDER}.")
         update_submission(submission_id, {
             "error_message": "The original upload is no longer available for retry.",
             "error_steps": ["Go back to the submit page and upload the presentation again."],
@@ -541,6 +557,8 @@ def download(submission_id):
         logging.error(f"Download requested for submission {submission_id}, but {processed_path} is missing on disk.")
         flash("We couldn't find the processed file. Please try submitting it again.")
         return redirect(url_for("details", submission_id=submission_id))
+
+    logging.info(f"Download of submission {submission_id} as {download_name}.")
 
     return send_from_directory(
         PROCESSED_FOLDER,

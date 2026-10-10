@@ -240,8 +240,9 @@ def get_model():
             if saved["config"] != CONFIG:
                 raise ValueError(f"model was trained with {saved['config']}, code uses {CONFIG}")
             _model = saved["model"]
+            logging.info(f"Title model loaded from {MODEL_PATH.name}.")
         except Exception as e:
-            logging.warning(f"Title model unavailable, only real title placeholders will be found. Error: {e}")
+            logging.exception(f"Title model unavailable, only real title placeholders will be found. Error: {e}")
             _model = False
     return _model or None
 
@@ -264,7 +265,8 @@ def guess_title(slide):
             return None
         p = model.predict_proba(feature_rows(recs))[:, 1]
         best = int(np.argmax(p))
+        logging.debug(f"Title guess: best of {len(recs)} shape(s) scored {p[best]:.2f} (threshold {THRESHOLD}).")
         return recs[best]["shape"] if p[best] >= THRESHOLD else None
     except Exception as e:
-        logging.warning(f"Could not guess a title for a slide. Error: {e}")
+        logging.exception(f"Could not guess a title for a slide. Error: {e}")
         return None
