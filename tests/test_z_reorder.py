@@ -211,6 +211,29 @@ def test_processing_writes_an_updated_file_and_a_report(folders, fake_captions):
     assert os.path.exists(os.path.join(output_folder, "issue_missing_alt_text_alt_text"))
 
 
+def test_the_report_is_not_empty(folders, fake_captions):
+    input_folder, output_folder = folders
+    copy_fixture("issue_missing_alt_text.pptx", input_folder)
+
+    z_reorder.process_one_file("issue_missing_alt_text.pptx", input_folder, output_folder)
+
+    with open(os.path.join(output_folder, "issue_missing_alt_text_alt_text"), encoding="utf-8") as f:
+        assert "Alt Text:" in f.read()
+
+
+def test_processing_logs_a_summary_with_the_output_paths(folders, fake_captions, caplog):
+    input_folder, output_folder = folders
+    copy_fixture("issue_missing_alt_text.pptx", input_folder)
+
+    with caplog.at_level("INFO"):
+        z_reorder.process_one_file("issue_missing_alt_text.pptx", input_folder, output_folder)
+
+    summary = [m for m in caplog.messages if m.startswith("Summary:")]
+    assert len(summary) == 1
+    assert "image(s) captioned" in summary[0]
+    assert "issue_missing_alt_text_updated.pptx" in summary[0]
+
+
 def test_the_original_upload_is_moved_out_of_the_input_folder(folders, fake_captions):
     input_folder, output_folder = folders
     copy_fixture("control_no_issues.pptx", input_folder)

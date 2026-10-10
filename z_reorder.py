@@ -220,11 +220,18 @@ def accessibility_processor(directory, new_directory):
         logging.warning("No .pptx files found. Nothing to process.")
         return
 
+    failed = []
+
     for filename in pptx_files:
         was_successful, message, _ = process_one_file(filename, directory, new_directory)
 
         if not was_successful:
             logging.error(f"{filename} failed: {message}")
+            failed.append(filename)
+
+    logging.info(
+        f"Run summary: {len(pptx_files) - len(failed)}/{len(pptx_files)} file(s) processed into "
+        f"{new_directory}. Failed: {', '.join(failed) or 'none'}")
 
 
 def find_libreoffice():
@@ -408,7 +415,7 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
 
     try:
         with open(alt_text_output_file, "w", encoding="utf-8") as f:
-            fix_titles_and_log_alt_text(prs, f, filename, progress_callback)
+            counts = fix_titles_and_log_alt_text(prs, f, filename, progress_callback)
     except Exception as e:
         logging.exception(f"Something went wrong processing shapes in {filename}. Error: {e}")
         return False, "We opened your file, but something went wrong while checking your slides for accessibility issues.", [
@@ -441,7 +448,10 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
             "Please try submitting it again.",
         ]
 
-    logging.info(f"Finished: {filename} in {time.perf_counter() - started_at:.2f}s.")
+    logging.info(
+        f"Summary: {filename} | {counts['slides']} slide(s), {counts['titles_moved']} title(s) moved, "
+        f"{counts['captioned']} image(s) captioned | report: {alt_text_output_file} | "
+        f"updated deck: {new_filepath} | {time.perf_counter() - started_at:.2f}s")
     return True, None, None
 
 
@@ -566,6 +576,7 @@ def count_images_needing_captions(prs):
 def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     total_to_caption = count_images_needing_captions(prs)
     captions_done = 0
+    titles_moved = 0
     logging.info(f"{filename}: {total_to_caption} image(s) need a caption.")
 
     if progress_callback is not None:
@@ -582,6 +593,8 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         slide_text = get_slide_text(slide)
 
         moved = move_titles_to_front(slide)
+
+        titles_moved += moved
 
         if moved:
             logging.info(f"{filename}: slide {slide_number} moved {moved} title shape(s) to the front.")
@@ -600,6 +613,8 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
                     progress_callback(captions_done, total_to_caption)
 
     logging.info(f"{filename}: alt text pass done, {captions_done}/{total_to_caption} image(s) captioned.")
+
+    return {"slides": len(prs.slides), "titles_moved": titles_moved, "captioned": captions_done}
 
 
 def get_picture_alt_text(shape):
