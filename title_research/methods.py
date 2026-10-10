@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from title_detection import CONFIG, feature_rows  # noqa: E402  (one copy, shared with the app)
+from title_detection import feature_rows  # noqa: E402  (one copy, shared with the app)
 
 TITLE_PH_NAMES = ("TITLE", "CENTER_TITLE")
 

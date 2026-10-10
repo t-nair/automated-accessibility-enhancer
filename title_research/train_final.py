@@ -30,5 +30,5 @@ if __name__ == "__main__":
     X = np.vstack([M.build_xy([s])[0] for part in parts for s in part])
     y = np.concatenate([M.build_xy([s])[1] for part in parts for s in part])
     model = M.LearnedTitle("gbm").fit_xy(X, y).model
-    joblib.dump({"model": model, "config": dict(M.CONFIG)}, OUT, compress=3)
+    joblib.dump({"model": model}, OUT, compress=3)
     print(f"{len(y)} shapes ({int(y.sum())} titles) -> {OUT} ({OUT.stat().st_size // 1024} KB)")
