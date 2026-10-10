@@ -20,6 +20,8 @@ What happens to a file after it is uploaded:
 2. If it is an older `.ppt`, LibreOffice converts it to `.pptx` first
 3. Each slide is checked, and its title shapes are moved to the front of the reading order. A shape counts as a title if it is a real title placeholder, or if its name contains "title" in any capitalisation (subtitles are left alone). Running a file a second time changes nothing
 4. Every picture without usable alt text is described by a vision model, and the description is written into the file. Alt text that is just a filename (`photo.png`) or PowerPoint's own name for the picture (`Picture 3`) counts as missing. Alt text a person wrote is never overwritten
+3. Each slide is checked, and its title is moved to the front of the reading order. A real title placeholder (or a shape named "Title") is used when there is one. Otherwise `title_detection.py` guesses which text box is the title from its size, position and wording (see `title_research/README.md`)
+4. Every picture without alt text is described by a vision model, and the description is written into the file
 5. An updated `.pptx` and a report are written to the output folder
 
 ---
@@ -104,6 +106,8 @@ There are 114 tests. They cover the helper functions (title detection, reading o
 
 The tests replace the image description model with a stand-in, so they finish in about a second instead of several minutes. Most of the time you see when running them is Python loading PyTorch, not the tests themselves. The tests use temporary folders, so running them never touches real uploads or the submissions file.
 
+GitHub Actions runs these tests on every pull request (`.github/workflows/ci.yml`). The tests stub out the model, so CI never downloads it, but it still installs PyTorch and Transformers because `z_reorder.py` imports them. Not covered yet: a test that runs the real model, and any deployment step. Add a deploy workflow once there is a hosting target.
+
 To make more sample files to test with:
 
 ```
@@ -117,6 +121,9 @@ python generate_test_pptx.py
 ```
 app.py                  the website: uploading, status, reports, downloads
 z_reorder.py            the pipeline: converting, fixing titles, writing descriptions
+title_detection.py      finds the title of a slide that has no real title placeholder
+title_model.joblib      the small trained model title_detection.py uses
+title_research/         how the title model was chosen: data, experiments, results
 generate_test_pptx.py   makes the sample files used by the tests
 
 templates/
