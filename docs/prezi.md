@@ -25,6 +25,20 @@ This is a research note for [#37](https://github.com/t-nair/automated-accessibil
 3. Review the report. Fix what it lists as "reported only".
 4. Give learners the remediated `.pptx` (or its PDF export) instead of, or next to, the Prezi link.
 
+## Screen reader support in the portable player
+
+**Untested.** We found no published testing of the portable EXE/ZIP player with NVDA or JAWS, and we have not tested it ourselves. Assume it is not accessible until someone checks.
+
+What the sources say, none of it specific to the offline player:
+
+- Prezi's [accessible design guidance](https://support.prezi.com/hc/en-us/articles/29413944153879-How-to-design-more-accessible-Prezi-presentations) recommends a PDF version for screen reader users.
+- A [CUNY accessibility guide](https://guides.cuny.edu/accessibility/prezi) and a [2015 review](https://barrydahl.com/2015/01/08/accessibility-concerns-of-using-prezi-in-education/) say Prezi is not accessibility compliant, cannot be tabbed through, and only moves between frames with the arrow keys. These may predate current features.
+- Prezi's [offline help](https://support.prezi.com/hc/en-us/articles/360003498953-Presenting-and-viewing-a-presentation-offline) covers exporting and presenting, and says nothing about screen readers.
+
+Open questions: whether labels set with "Visible to screen readers" carry into the offline player, and whether the player exposes text and focus to a screen reader at all.
+
+To test: export a portable Prezi (Plus plan or higher), open it with NVDA (free, Windows), and try reading text, moving between frames by keyboard and reaching labelled objects. Record the result here.
+
 ## Not verified yet
 
 The PPTX export has not been tested with this tool. Open questions:
