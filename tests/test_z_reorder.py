@@ -612,3 +612,36 @@ def test_a_whole_folder_is_processed_in_one_run(folders, fake_captions):
 
     prs = Presentation(os.path.join(output_folder, "issue_title_not_first_in_order_updated.pptx"))
     assert [shape.name for shape in prs.slides[0].shapes] == ["Title 1", "Body Text 1"]
+
+
+def make_deck_with_untitled_slides(path):
+    prs = Presentation()
+    titled = prs.slides.add_slide(prs.slide_layouts[5])
+    titled.shapes.title.text = "Has a title"
+    prs.slides.add_slide(prs.slide_layouts[5])  # title placeholder left empty
+    prs.slides.add_slide(prs.slide_layouts[6])  # blank layout, no shapes
+    prs.save(path)
+
+
+def test_slides_without_a_title_are_listed_in_the_report(folders, fake_captions):
+    input_folder, output_folder = folders
+    make_deck_with_untitled_slides(os.path.join(input_folder, "untitled.pptx"))
+
+    z_reorder.process_one_file("untitled.pptx", input_folder, output_folder)
+
+    with open(os.path.join(output_folder, "untitled_alt_text"), encoding="utf-8") as f:
+        report = f.read()
+
+    assert "Slides with no title (WCAG 2.4.2): 2, 3" in report
+
+
+def test_a_deck_where_every_slide_has_a_title_reports_nothing(folders, fake_captions):
+    input_folder, output_folder = folders
+    prs = Presentation()
+    prs.slides.add_slide(prs.slide_layouts[5]).shapes.title.text = "Only slide"
+    prs.save(os.path.join(input_folder, "titled.pptx"))
+
+    z_reorder.process_one_file("titled.pptx", input_folder, output_folder)
+
+    with open(os.path.join(output_folder, "titled_alt_text"), encoding="utf-8") as f:
+        assert "no title" not in f.read()

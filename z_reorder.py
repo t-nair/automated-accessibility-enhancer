@@ -562,6 +562,19 @@ def move_titles_to_front(slide):
     return len(titles)
 
 
+def has_title(slide):
+    """True if the slide has a title shape with actual text in it.
+
+    An empty title placeholder ("Click to add title") counts as no title: it
+    announces nothing to a screen reader, and PowerPoint's checker flags it too.
+    """
+    for shape in slide.shapes:
+        if is_title(shape) and shape.has_text_frame and shape.text_frame.text.strip():
+            return True
+
+    return False
+
+
 def count_images_needing_captions(prs):
     total = 0
 
@@ -582,9 +595,14 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     if progress_callback is not None:
         progress_callback(captions_done, total_to_caption)
 
+    untitled_slides = []
+
     for slide_number, slide in enumerate(prs.slides, start=1):
 
         logging.debug(f"{filename}: slide {slide_number} has {len(slide.shapes)} shape(s).")
+
+        if not has_title(slide):
+            untitled_slides.append(slide_number)
 
         if len(slide.shapes) == 0:
             logging.warning(f"{filename}: slide {slide_number} has no shapes, skipping title fix.")
@@ -611,6 +629,12 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
                 if progress_callback is not None:
                     progress_callback(captions_done, total_to_caption)
+
+    # report only: a generated title would be a guess, so a person adds the real one
+    if untitled_slides:
+        slide_list = ", ".join(str(n) for n in untitled_slides)
+        logging.warning(f"{filename}: slides with no title: {slide_list}")
+        f.write(f" \n Slides with no title (WCAG 2.4.2): {slide_list} \n")
 
     logging.info(f"{filename}: alt text pass done, {captions_done}/{total_to_caption} image(s) captioned.")
 
