@@ -24,6 +24,8 @@ What happens to a file after it is uploaded:
 4. Every picture without alt text is described by a vision model, and the description is written into the file
 5. An updated `.pptx` and a report are written to the output folder
 
+See [docs/wcag-coverage.md](docs/wcag-coverage.md) for which WCAG 2.1 criteria are fixed, reported only, or not covered yet.
+
 ---
 
 ## What you need
