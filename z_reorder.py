@@ -12,8 +12,9 @@ from PIL import Image
 from title_detection import guess_title
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 
+# file for the record, console so a failure is visible the moment it happens
 logging.basicConfig(
-    filename="pipeline.log",
+    handlers=[logging.FileHandler("pipeline.log", encoding="utf-8"), logging.StreamHandler()],
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
@@ -102,6 +103,7 @@ def get_caption_model():
         caption_model = Qwen2VLForConditionalGeneration.from_pretrained(CAPTION_MODEL_NAME, dtype=CAPTION_DTYPE)
         caption_model.to(CAPTION_DEVICE)
         caption_model.eval()
+        logging.info("Captioning model is loaded and ready.")
 
     return caption_processor, caption_model
 
@@ -174,6 +176,7 @@ def build_caption_prompt(slide_text):
 def generate_image_caption(shape, slide_text=""):
     image_bytes = shape.image.blob
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    logging.info(f"Captioning {shape.name} ({image.width}x{image.height}px, {len(image_bytes) // 1024} KB).")
 
     processor, model = get_caption_model()
     prompt = build_caption_prompt(slide_text)
@@ -193,9 +196,14 @@ def generate_image_caption(shape, slide_text=""):
     new_tokens = output[0][len(inputs.input_ids[0]):]
     caption = processor.decode(new_tokens, skip_special_tokens=True)
 
-    logging.info(f"Caption generated in {seconds_taken:.2f} seconds on {CAPTION_DEVICE}.")
+    caption = tidy_caption(caption)
+    logging.info(f"Caption generated in {seconds_taken:.2f} seconds on {CAPTION_DEVICE}: {caption!r}")
 
-    return tidy_caption(caption)
+    # an empty caption would be written into the deck as blank alt text, so fail loudly instead
+    if not caption:
+        raise ValueError("the model returned an empty caption")
+
+    return caption
 
 
 def accessibility_processor(directory, new_directory):
@@ -212,8 +220,18 @@ def accessibility_processor(directory, new_directory):
         logging.warning("No .pptx files found. Nothing to process.")
         return
 
+    failed = []
+
     for filename in pptx_files:
-        process_one_file(filename, directory, new_directory)
+        was_successful, message, _ = process_one_file(filename, directory, new_directory)
+
+        if not was_successful:
+            logging.error(f"{filename} failed: {message}")
+            failed.append(filename)
+
+    logging.info(
+        f"Run summary: {len(pptx_files) - len(failed)}/{len(pptx_files)} file(s) processed into "
+        f"{new_directory}. Failed: {', '.join(failed) or 'none'}")
 
 
 def find_libreoffice():
@@ -254,7 +272,9 @@ def convert_ppt_to_pptx(filepath, directory):
     converted_path = os.path.join(directory, os.path.splitext(os.path.basename(filepath))[0] + ".pptx")
 
     if not os.path.exists(converted_path):
-        logging.error(f"Conversion of {filepath} did not produce a file. LibreOffice said: {result.stderr[:300]}")
+        logging.error(
+            f"Conversion of {filepath} did not produce a file (exit code {result.returncode}). "
+            f"LibreOffice said: {result.stderr[:300]!r} {result.stdout[:300]!r}")
         return None, "We could not convert this older .ppt file.", [
             "Open the file in PowerPoint to check that it still opens.",
             "Use File > Save As to save it as a .pptx file.",
@@ -330,8 +350,10 @@ def open_presentation(filepath, filename):
             logging.warning(f"{filename} looks like it's in use (attempt {attempt}/{MAX_ATTEMPTS}). Retrying...")
             time.sleep(RETRY_DELAY_SECONDS)
         except Exception as e:
+            logging.exception(f"{filename} could not be parsed as a presentation.")
             return None, e
 
+    logging.error(f"{filename} is still locked after {MAX_ATTEMPTS} attempts.")
     return None, open_error
 
 
@@ -358,12 +380,14 @@ def move_original_to_output(directory, new_directory, filename):
 def process_one_file(filename, directory, new_directory, progress_callback=None):
     os.makedirs(new_directory, exist_ok=True)
     filepath = os.path.join(directory, filename)
+    started_at = time.perf_counter()
     logging.info(f"Starting: {filename}")
 
     problem = check_upload_is_usable(filepath, filename)
 
     if problem is not None:
         message, steps = problem
+        logging.error(f"{filename} rejected before processing: {message}")
         return False, message, steps
 
     # an old .ppt has to be converted before python-pptx can read it. The converted
@@ -374,6 +398,7 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
         converted_filepath, convert_message, convert_steps = convert_ppt_to_pptx(filepath, directory)
 
         if converted_filepath is None:
+            logging.error(f"{filename} could not be converted: {convert_message}")
             return False, convert_message, convert_steps
 
         filepath = converted_filepath
@@ -381,17 +406,18 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
     prs, open_error = open_presentation(filepath, filename)
 
     if prs is None:
-        logging.error(f"Could not open {filename}. Error: {open_error}")
+        logging.error(f"Could not open {filename}. Error: {open_error!r}")
         message, steps = get_open_error_details(open_error)
         return False, message, steps
 
+    logging.info(f"{filename}: opened {len(prs.slides)} slide(s) in {time.perf_counter() - started_at:.2f}s, checking titles and alt text.")
     alt_text_output_file = os.path.join(new_directory, os.path.splitext(filename)[0] + "_alt_text")
 
     try:
         with open(alt_text_output_file, "w", encoding="utf-8") as f:
-            fix_titles_and_log_alt_text(prs, f, filename, progress_callback)
+            counts = fix_titles_and_log_alt_text(prs, f, filename, progress_callback)
     except Exception as e:
-        logging.error(f"Something went wrong processing shapes in {filename}. Error: {e}")
+        logging.exception(f"Something went wrong processing shapes in {filename}. Error: {e}")
         return False, "We opened your file, but something went wrong while checking your slides for accessibility issues.", [
             "This can happen with unusual slide layouts or embedded objects.",
             "Try saving a fresh copy in PowerPoint and uploading it again.",
@@ -402,7 +428,7 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
     try:
         prs.save(new_filepath)
     except Exception as e:
-        logging.error(f"Could not save updated file for {filename}. Error: {e}")
+        logging.exception(f"Could not save updated file for {filename}. Error: {e}")
         return False, "We updated your slides, but something went wrong saving the new file.", [
             "This is often temporary. Please try submitting it again.",
         ]
@@ -422,7 +448,10 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
             "Please try submitting it again.",
         ]
 
-    logging.info(f"Finished: {filename}")
+    logging.info(
+        f"Summary: {filename} | {counts['slides']} slide(s), {counts['titles_moved']} title(s) moved, "
+        f"{counts['captioned']} image(s) captioned | report: {alt_text_output_file} | "
+        f"updated deck: {new_filepath} | {time.perf_counter() - started_at:.2f}s")
     return True, None, None
 
 
@@ -434,7 +463,8 @@ def get_shape_type(shape):
     """
     try:
         return shape.shape_type
-    except (NotImplementedError, ValueError):
+    except (NotImplementedError, ValueError) as e:
+        logging.debug(f"Shape type unavailable for {getattr(shape, 'name', '?')}: {e!r}")
         return None
 
 
@@ -454,8 +484,8 @@ def is_title(shape):
     try:
         if shape.is_placeholder and shape.placeholder_format.type in TITLE_PLACEHOLDERS:
             return True
-    except (AttributeError, KeyError, ValueError):
-        pass
+    except (AttributeError, KeyError, ValueError) as e:
+        logging.debug(f"Could not read placeholder type of {shape.name}: {e!r}")
 
     name = shape.name.lower()
 
@@ -509,6 +539,8 @@ def move_titles_to_front(slide):
         # no title placeholder and no shape named "title", so the author probably typed the
         # title into a text box or a body placeholder. Ask the model which shape reads like one.
         guess = guess_title(slide)
+        guessed_name = guess.name if guess is not None else "no title"
+        logging.info(f"No title placeholder; model guessed {guessed_name!r}.")
         titles = [shape for shape in shapes if guess is not None and shape._element is guess._element]
 
     if not titles:
@@ -557,6 +589,8 @@ def count_images_needing_captions(prs):
 def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     total_to_caption = count_images_needing_captions(prs)
     captions_done = 0
+    titles_moved = 0
+    logging.info(f"{filename}: {total_to_caption} image(s) need a caption.")
 
     if progress_callback is not None:
         progress_callback(captions_done, total_to_caption)
@@ -564,6 +598,8 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     untitled_slides = []
 
     for slide_number, slide in enumerate(prs.slides, start=1):
+
+        logging.debug(f"{filename}: slide {slide_number} has {len(slide.shapes)} shape(s).")
 
         if not has_title(slide):
             untitled_slides.append(slide_number)
@@ -575,6 +611,8 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         slide_text = get_slide_text(slide)
 
         moved = move_titles_to_front(slide)
+
+        titles_moved += moved
 
         if moved:
             logging.info(f"{filename}: slide {slide_number} moved {moved} title shape(s) to the front.")
@@ -597,6 +635,10 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         slide_list = ", ".join(str(n) for n in untitled_slides)
         logging.warning(f"{filename}: slides with no title: {slide_list}")
         f.write(f" \n Slides with no title (WCAG 2.4.2): {slide_list} \n")
+
+    logging.info(f"{filename}: alt text pass done, {captions_done}/{total_to_caption} image(s) captioned.")
+
+    return {"slides": len(prs.slides), "titles_moved": titles_moved, "captioned": captions_done}
 
 
 def get_picture_alt_text(shape):
@@ -624,8 +666,8 @@ def write_alt_text_line(shape, f, slide_text=""):
             try:
                 alt_text = generate_image_caption(shape, slide_text)
             except Exception as e:
-                logging.warning(f"Could not generate a caption for {shape.name}. Falling back to a placeholder. Error: {e}")
                 alt_text = f"Image {shape.name}"
+                logging.exception(f"Could not generate a caption for {shape.name}. Falling back to the placeholder {alt_text!r}. Error: {e}")
 
             set_picture_alt_text(shape, alt_text)
             f.write(f" \n Shape: {shape.name} \n - Alt Text: {alt_text} \n")

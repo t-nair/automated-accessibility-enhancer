@@ -82,9 +82,6 @@ python build_dataset.py                            # parses them into data/slide
 python evaluate.py                                 # rules + learned, cues hidden
 python robustness.py --sample                      # layout stress test
 python natural.py                                  # the hand-labeled natural set, held out
-python models_eval.py laya table-choice-base verbal-choice-base   # slow
-python models_eval.py hf                                          # slow
-python embed_fusion.py                             # sentence-embedding experiment
 python train_final.py                              # writes ../title_model.joblib
 ```
 

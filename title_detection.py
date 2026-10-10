@@ -191,11 +191,9 @@ ALIGNS = ("center", "left", "right", "none")
 NUM = ["x", "y", "w", "h", "cx", "cy", "pt", "pt_rel", "pt_rank", "y_rank", "n_chars", "n_words",
        "n_paras", "rot", "n_shapes"]
 BOOL = ["bold", "bullets", "caps", "end_punct", "digits_only", "is_auto", "first", "last"]
-# z: where the shape sits in z-order. Real decks mostly put the title first (argmax accuracy on
-# hand-labeled slides 96% with it, 92% without); the z_shuffle perturbation stops the model
-# from relying on it when the order is scrambled.
-# text: cheap wording features (title case, "?", numbered heading ...).
-CONFIG = {"z": True, "text": True}
+# Two feature groups are on: z-order position (real decks mostly put the title first; the
+# z_shuffle perturbation stops the model relying on it) and cheap wording features
+# (title case, "?", numbered heading ...).
 
 MODEL_PATH = Path(__file__).with_name("title_model.joblib")
 # below this the best shape is not called a title. Overall accuracy is flat for 0.05-0.2 on the
@@ -219,10 +217,8 @@ def feature_rows(recs):
         row += [float(r["align"].upper().startswith(a.upper())) for a in ALIGNS]
         row += [r["y"] + r["h"], r["w"] * r["h"], r["n_chars"] / max_chars,
                 r["n_chars"] / max(r["n_paras"], 1), float(abs(r["cx"] - 0.5) < 0.08)]
-        if CONFIG["z"]:
-            row.append(i / len(recs))
-        if CONFIG["text"]:
-            row += text_feats(r["text"])
+        row.append(i / len(recs))
+        row += text_feats(r["text"])
         rows.append(row)
     return np.array(rows)
 
@@ -236,12 +232,10 @@ def get_model():
     if _model is None:
         try:
             import joblib
-            saved = joblib.load(MODEL_PATH)
-            if saved["config"] != CONFIG:
-                raise ValueError(f"model was trained with {saved['config']}, code uses {CONFIG}")
-            _model = saved["model"]
+            _model = joblib.load(MODEL_PATH)["model"]
+            logging.info(f"Title model loaded from {MODEL_PATH.name}.")
         except Exception as e:
-            logging.warning(f"Title model unavailable, only real title placeholders will be found. Error: {e}")
+            logging.exception(f"Title model unavailable, only real title placeholders will be found. Error: {e}")
             _model = False
     return _model or None
 
@@ -264,7 +258,8 @@ def guess_title(slide):
             return None
         p = model.predict_proba(feature_rows(recs))[:, 1]
         best = int(np.argmax(p))
+        logging.debug(f"Title guess: best of {len(recs)} shape(s) scored {p[best]:.2f} (threshold {THRESHOLD}).")
         return recs[best]["shape"] if p[best] >= THRESHOLD else None
     except Exception as e:
-        logging.warning(f"Could not guess a title for a slide. Error: {e}")
+        logging.exception(f"Could not guess a title for a slide. Error: {e}")
         return None
