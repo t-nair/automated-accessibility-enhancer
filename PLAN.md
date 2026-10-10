@@ -102,7 +102,7 @@ Milestone: Beyond slides: web pages and other formats.
 
 **PDF** is currently tracked only as #40, a check that PDF exports of fixed decks keep tags and titles. Full PDF remediation (the second-format proposal below) has **no issue yet**.
 
-Other format issues: #37 Prezi (research), #38 Google Slides and Keynote export path, #39 `.ppt` conversion tests.
+Other format issues: #37 Prezi (decided: document only, export to `.pptx` and use the existing path, see [docs/prezi.md](docs/prezi.md)), #38 Google Slides and Keynote export path, #39 `.ppt` conversion tests.
 
 #### PDF remediation proposal
 
