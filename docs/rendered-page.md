@@ -2,7 +2,7 @@
 
 Decision: **do not add a headless browser yet.** Revisit once HTML support ([#41](https://github.com/t-nair/automated-accessibility-enhancer/issues/41)) has shipped its static checks. When it is time, use **axe-core driven by Playwright**, as an optional "report only" step.
 
-This is a research note for [#47](https://github.com/t-nair/automated-accessibility-enhancer/issues/47). It is based on the tools' documentation and general knowledge, not on a hands-on trial (see "Not verified yet").
+This is a research note for [#47](https://github.com/t-nair/automated-accessibility-enhancer/issues/47). The comparison and cost sections are from general knowledge of the tools; the "Spike results" section is measured.
 
 ## Why static HTML is not enough
 
@@ -28,27 +28,52 @@ The same reason applies to the other rows in `wcag-coverage.md` marked "Needs a 
 1. **Now:** static checks only, as planned in #41 and the related issues. They cover most of the cheap wins and need no new dependency.
 2. **Later, if users ask for contrast or keyboard reports:** add Playwright (Python) plus axe-core as an *optional* extra, loaded only when the input is HTML and the user opts in. Not in `requirements.txt` by default.
 3. **Report only.** Rendered checks tell us a page fails; fixing computed colours or focus behaviour safely is a design decision, so these results go in the report, not into automatic edits.
-4. **Skip our own keyboard crawler** unless axe-core's coverage of 2.1.1 and 2.1.2 turns out too thin.
+4. **Add a small Tab-walk check of our own** for 2.1.1 and 2.1.2 and for skip links. The spike showed axe-core misses traps and does not require a skip link.
 
 ## Costs to weigh
 
-- **Size.** Playwright downloads a Chromium build (hundreds of MB). The project already depends on torch and transformers, so this is not unusual here, but it matters for CI and for anyone who only wants slides.
+- **Size.** Playwright downloads a Chromium build (about 270 MB measured). The project already depends on torch and transformers, so this is not unusual here, but it matters for CI and for anyone who only wants slides.
 - **Deployment.** The browser must be installable on the machine running the Flask app.
 - **Speed.** A page load per file, not milliseconds. Fine for a batch job, awkward for an instant upload form.
 - **Scope.** Slides are `.pptx`; none of this applies to them. It only pays off after HTML input exists.
 - **Limits of automation.** Automated engines are widely reported to catch only a minority of WCAG issues. Expect "incomplete" results (for example, text over images) that still need a person.
 - **Licence.** axe-core is open source under MPL-2.0. Check that this suits the project before bundling it.
 
+## Spike results
+
+Run on 2026-10-10 with axe-core 4.14.0 and Playwright 1.61 (Python, headless Chromium), on three small hand-written pages in [`rendered-page-spike/`](rendered-page-spike/). Run it with `python run.py` from that folder after `npm pack axe-core` and extracting it to `package/`. The pages are deliberately broken, so this shows what axe-core can and cannot see, not how common the problems are.
+
+| Page | axe-core found | axe-core missed or could not decide |
+|---|---|---|
+| **A** static export: low-contrast paragraph, banner and link, image without alt, working skip link | 1.4.3: 5 nodes. 1.1.1: 1 node. | A `<div onclick>` that is not focusable (2.1.1): not flagged. |
+| **B** LMS-like: no skip link, text over a gradient and a background image, focus outline removed, no `lang` | Missing `lang`. | Contrast over the gradient and image: 11 nodes in **incomplete**, not decided. No skip-link finding, because headings satisfy axe's bypass rule. Removed focus outline (2.4.7): not flagged. |
+| **C** trap: input that swallows Tab, `<span role="button">` with no tabindex, no skip link | Nothing at all. | The **keyboard trap** (2.1.2), the unfocusable fake button (2.1.1), and the missing skip link. A scripted Tab walk of the page did show focus stuck on the input. |
+
+What this means:
+
+- **1.4.3 contrast: worth it.** axe-core decides plain text and background colours well. Text over gradients and images lands in "incomplete" and still needs a person.
+- **2.4.1 bypass blocks: weak.** A page passes if it has headings or landmarks, even with no skip link. Whether that is acceptable is a judgement call; axe-core will not tell us a skip link is missing.
+- **2.1.1 / 2.1.2 keyboard: not covered.** axe-core does not find traps or non-focusable click targets. A small Tab-walk script of our own (about 10 lines in the spike) found the trap, so that is the part we would write ourselves.
+
+Measured cost:
+
+| Item | Size or time |
+|---|---|
+| axe-core (`axe.min.js`) | 0.65 MB (3.4 MB unpacked package) |
+| Playwright Python package | 106 MB on disk (includes its Node driver) |
+| Chromium headless shell | 272 MB on disk (full Chromium: 428 MB) |
+| Browser launch | 0.55 s once |
+| Per page (load, inject, run axe) | 0.2 to 0.4 s for these tiny local pages |
+
+Per-page times are for small local files with no network. Real pages with images, fonts and scripts will be slower; we did not measure that.
+
 ## Not verified yet
 
-- We have not run axe-core on any page or measured install size and run time here.
-- We have not checked how well it handles the page shapes this tool is likely to receive (static exports, LMS pages).
-- We have not confirmed which of 2.1.1 and 2.4.1 axe-core can fully decide versus only flag as "incomplete".
-
-Spike to settle these: run axe-core through Playwright on three representative pages, record violations, "incomplete" items, install size and seconds per page, and write the numbers here.
+- Real pages: all three test pages are hand-made. Run the same script on a few real course pages to check noise and timing.
+- Whether `axe-core` run through Playwright works on the deployment machine, which was not tried.
 
 ## Revisit when
 
 - HTML input and its static checks have shipped.
 - Users report contrast or keyboard problems that static checks cannot see.
-- The spike shows axe-core decides most of 1.4.3 and 2.4.1 with few "incomplete" results.
+- Real course pages show axe-core's contrast results are mostly decided rather than "incomplete".
