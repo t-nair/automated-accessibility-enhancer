@@ -2,7 +2,7 @@
 
 Decision: **do not add a headless browser yet.** Revisit once HTML support ([#41](https://github.com/t-nair/automated-accessibility-enhancer/issues/41)) has shipped its static checks. When it is time, use **axe-core driven by Playwright**, as an optional "report only" step.
 
-This is a research note for [#47](https://github.com/t-nair/automated-accessibility-enhancer/issues/47). The comparison and cost sections are from general knowledge of the tools; the "Spike results" section is measured.
+This is a research note for [#47](https://github.com/t-nair/automated-accessibility-enhancer/issues/47). The comparison table is sourced from the linked pages (checked 2026-10-10); the "Spike results" section is measured; the cost bullets are partly general knowledge.
 
 ## Why static HTML is not enough
 
@@ -19,9 +19,17 @@ The same reason applies to the other rows in `wcag-coverage.md` marked "Needs a 
 | Option | What it gives | Cost |
 |---|---|---|
 | **Static only** (BeautifulSoup/lxml, no browser) | Alt text, labels, headings, landmarks, `lang`, table headers, explicit skip-link presence. Fast, no new runtime. | Cannot judge contrast, keyboard or focus. |
-| **axe-core in a headless browser** | Computed-style contrast (1.4.3), bypass/landmark rules (2.4.1), many keyboard-related rules (focusable scroll regions, `tabindex`, etc.). Returns "violations" and "incomplete" (needs a human), which maps onto our Fixed / Reported only split. | A browser binary plus a JS library. |
-| **Playwright/Selenium scripts of our own** | Can Tab through the page and detect traps or an unreachable control (2.1.1, 2.1.2). | We would write and maintain the rules ourselves. |
-| **pa11y / Lighthouse** | Wrappers around axe-core or similar engines. | Node toolchain on top, for no extra coverage. |
+| **axe-core in a headless browser** | Runs on the rendered DOM, so computed-style contrast (1.4.3) and bypass/landmark rules work. Reports "violations" and "incomplete" (a person must review), which maps onto our Fixed / Reported only split. Its stated goal is zero false positives. MPL-2.0. | A browser binary plus a JS library. Python wrappers: [axe-playwright-python](https://pypi.org/project/axe-playwright-python/) (0.1.8, July 2026, one maintainer) and [axe-selenium-python](https://pypi.org/project/axe-selenium-python/) (3.0.0, April 2026, bundles axe-core 4.10.2, needs Python 3.12+). Or inject `axe.min.js` ourselves, as the spike did. |
+| **Playwright/Selenium scripts of our own** | Can Tab through the page and detect traps or an unreachable control (2.1.1, 2.1.2). | We write and maintain the rules ourselves. |
+| **[pa11y](https://github.com/pa11y/pa11y)** | A wrapper that drives headless Chrome (Puppeteer) and runs HTML_CodeSniffer (default) and/or axe-core. Exit codes suit CI. | Node 22.13+ toolchain, LGPL-3.0, and results from two engines can duplicate. Adds no coverage over axe-core itself if the axe runner is used. |
+| **[Lighthouse](https://developer.chrome.com/docs/lighthouse/accessibility/scoring)** | Its accessibility category is built on axe-core and gives a weighted score. Lists focus traps, tab order and custom control roles as manual checks. | Node tool; a score is less useful to us than per-element findings. Only a subset of audits affects the score. |
+
+## How much automation can see
+
+- Deque's study of 2,000+ audits, 13,000+ pages and about 300,000 issues found automated testing fully covered [57% of issues by count](https://www.deque.com/blog/automated-testing-study-identifies-57-percent-of-digital-accessibility-issues/). That is a vendor figure, measured on issues found in first-time audits, not on share of WCAG criteria.
+- The [axe-core README](https://github.com/dequelabs/axe-core) uses the same 57% and says "incomplete" results need manual review. Other sources quote 30 to 50%; treat the share as "roughly a third to a half".
+- The [DWP accessibility manual](https://accessibility-manual.dwp.gov.uk/best-practice/automated-testing-using-axe-core-and-pa11y) estimates axe-core plus pa11y at about 35%, a single-source figure.
+- Lighthouse's [own scoring page](https://developer.chrome.com/docs/lighthouse/accessibility/scoring) lists focus traps and logical tab order as manual checks, which matches what the spike found.
 
 ## Recommendation
 
