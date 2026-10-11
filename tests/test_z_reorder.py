@@ -3,6 +3,7 @@ import sys
 import shutil
 
 import pytest
+from lxml import etree
 from pptx import Presentation
 from pptx.util import Inches, Pt
 
@@ -645,3 +646,106 @@ def test_a_deck_where_every_slide_has_a_title_reports_nothing(folders, fake_capt
 
     with open(os.path.join(output_folder, "titled_alt_text"), encoding="utf-8") as f:
         assert "no title" not in f.read()
+
+
+def add_sized_box(slide, text, size):
+    box = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(5), Inches(1))
+    run = box.text_frame.paragraphs[0].add_run()
+    run.text = text
+    run.font.size = Pt(size)
+
+    return box
+
+
+def small_text_names(slide, **kwargs):
+    return [name for name, _, _ in z_reorder.find_small_text(slide, **kwargs)]
+
+
+def test_an_explicit_size_below_the_minimum_is_flagged():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    small = add_sized_box(slide, "Footnote", 8)
+    add_sized_box(slide, "Body", 9)
+
+    assert z_reorder.find_small_text(slide) == [(small.name, 8, "Footnote")]
+
+
+def test_a_size_inherited_from_the_master_is_flagged():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.placeholders[1].text = "Body text"
+    master = slide.slide_layout.slide_master._element
+    body_style = master.find(title_detection.qn("p:txStyles")).find(title_detection.qn("p:bodyStyle"))
+    body_style.find(title_detection.qn("a:lvl1pPr")).find(title_detection.qn("a:defRPr")).set("sz", "800")
+
+    assert small_text_names(slide) == [slide.placeholders[1].name]
+
+
+def test_a_size_inherited_from_the_layout_wins_over_the_master():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.placeholders[1].text = "Body text"
+    layout_body = [p for p in slide.slide_layout.placeholders if p.placeholder_format.idx == 1][0]
+    list_style = layout_body._element.find(".//" + title_detection.qn("a:lstStyle"))
+    level_one = etree.SubElement(list_style, title_detection.qn("a:lvl1pPr"))
+    etree.SubElement(level_one, title_detection.qn("a:defRPr")).set("sz", "700")
+
+    assert small_text_names(slide) == [slide.placeholders[1].name]
+
+
+def test_inherited_sizes_at_normal_size_are_not_flagged():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.shapes.title.text = "Title"
+    slide.placeholders[1].text = "Body text"
+
+    assert z_reorder.find_small_text(slide) == []
+
+
+def test_a_shrink_on_overflow_scale_can_push_text_below_the_minimum():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    box = add_sized_box(slide, "Squeezed", 12)
+    body_pr = box.text_frame._txBody.find(title_detection.qn("a:bodyPr"))
+    fit = etree.SubElement(body_pr, title_detection.qn("a:normAutofit"))
+    fit.set("fontScale", "60000")
+
+    assert small_text_names(slide) == [box.name]
+
+
+def test_the_minimum_can_be_changed():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    box = add_sized_box(slide, "Twelve point", 12)
+
+    assert small_text_names(slide) == []
+    assert small_text_names(slide, min_pt=14) == [box.name]
+
+
+def test_small_text_in_a_table_cell_is_flagged():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    table = slide.shapes.add_table(1, 1, Inches(1), Inches(1), Inches(4), Inches(1))
+    run = table.table.cell(0, 0).text_frame.paragraphs[0].add_run()
+    run.text = "Cell"
+    run.font.size = Pt(7)
+
+    assert small_text_names(slide) == [table.name]
+
+
+def test_small_text_is_listed_by_slide_in_the_report(folders, fake_captions):
+    input_folder, output_folder = folders
+    prs = Presentation()
+    prs.slides.add_slide(prs.slide_layouts[6])
+    add_sized_box(prs.slides.add_slide(prs.slide_layouts[6]), "Tiny source note", 8)
+    prs.save(os.path.join(input_folder, "small.pptx"))
+
+    z_reorder.process_one_file("small.pptx", input_folder, output_folder)
+
+    with open(os.path.join(output_folder, "small_alt_text"), encoding="utf-8") as f:
+        report = f.read()
+
+    assert "Text below 9 pt (WCAG 1.4.4)" in report
+    assert "Slide 2, Shape: TextBox" in report
+    assert "8 pt: 'Tiny source note'" in report
+    assert "Slide 1," not in report
