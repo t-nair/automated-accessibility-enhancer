@@ -9,6 +9,7 @@ import torch
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.oxml.ns import qn
+from pptx.oxml.xmlchemy import OxmlElement
 from PIL import Image
 from title_detection import guess_title, _ph_chain, DEFAULT_PT, FURNITURE_PH
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
@@ -52,6 +53,10 @@ AUTO_SHAPE_NAME = re.compile(rf"^(?:{_AUTO_SHAPE_NAME}|\({_AUTO_SHAPE_NAME}\))$"
 
 # a real title placeholder is authoritative, the shape name is only a fallback
 TITLE_PLACEHOLDERS = (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
+
+# PowerPoint keeps the language as a lang attribute such as "en-US", on text runs and on
+# the presentation's default text style. This is the shape of a usable value.
+LANGUAGE_TAG = re.compile(r"^[a-z]{2,3}(-[a-z0-9]{2,8})*$", re.IGNORECASE)
 
 # WCAG sets no minimum point size, but text this small fails 1.4.4 (Resize Text) in
 # practice and cannot be read when projected. Set MIN_FONT_PT to use a different cutoff.
@@ -382,7 +387,12 @@ def move_original_to_output(directory, new_directory, filename):
     return move_error
 
 
-def process_one_file(filename, directory, new_directory, progress_callback=None):
+def process_one_file(filename, directory, new_directory, progress_callback=None, language=None):
+    # language is optional. When given, it is set across the whole deck, e.g. "en-US".
+    if language is not None and not is_language_tag(language):
+        logging.error(f"{filename} not processed: {language!r} is not a language code.")
+        return False, f"{language!r} is not a valid language code.", ["Use a code such as en-US or fr-FR."]
+
     os.makedirs(new_directory, exist_ok=True)
     filepath = os.path.join(directory, filename)
     started_at = time.perf_counter()
@@ -421,6 +431,7 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
     try:
         with open(alt_text_output_file, "w", encoding="utf-8") as f:
             counts = fix_titles_and_log_alt_text(prs, f, filename, progress_callback)
+            report_and_set_language(prs, f, filename, language)
     except Exception as e:
         logging.exception(f"Something went wrong processing shapes in {filename}. Error: {e}")
         return False, "We opened your file, but something went wrong while checking your slides for accessibility issues.", [
@@ -580,6 +591,34 @@ def has_title(slide):
     return False
 
 
+def is_language_tag(language):
+    return LANGUAGE_TAG.match(language) is not None
+
+
+def get_default_language(prs):
+    """The language on the presentation's default text style, or None if it has none."""
+    default = prs.part._element.find(
+        qn("p:defaultTextStyle") + "/" + qn("a:defPPr") + "/" + qn("a:defRPr"))
+
+    return default.get("lang") if default is not None else None
+
+
+def get_run_languages(prs):
+    """Map each lang value set on a slide's text runs to the slide numbers that use it.
+
+    Runs with no lang attribute inherit the default, so they are left out.
+    """
+    found = {}
+
+    for slide_number, slide in enumerate(prs.slides, start=1):
+        for run_props in slide._element.iter(qn("a:rPr")):
+            language = run_props.get("lang")
+
+            if language and slide_number not in found.setdefault(language, []):
+                found[language].append(slide_number)
+
+    return found
+
 def get_text_frames(shapes):
     """Yield (shape, text_frame) for every text box, placeholder and table cell, inside groups too."""
     for shape in shapes:
@@ -658,6 +697,107 @@ def find_small_text(slide, min_pt=MIN_FONT_PT):
             found.append((shape.name, min(sizes), " ".join(words)))
 
     return found
+
+
+def find_language_problems(prs):
+    """List what is wrong with the deck's language, as short sentences for the report.
+
+    WCAG 3.1.1 wants one language for the page, and 3.1.2 wants any passage in a
+    different language marked. A deck mixing languages is reported rather than
+    called wrong, because a marked French quotation is exactly what 3.1.2 asks for.
+    The text itself is not checked, so a deck wrongly marked en-US is not caught.
+    """
+    problems = []
+    default = get_default_language(prs)
+    in_use = get_run_languages(prs)
+
+    if not default:
+        problems.append("the presentation has no default language, so screen readers have to guess")
+    elif not is_language_tag(default):
+        problems.append(f"the presentation's default language {default!r} is not a valid language code")
+
+    for language, slides in in_use.items():
+        if not is_language_tag(language):
+            slide_list = ", ".join(str(n) for n in sorted(slides))
+            problems.append(f"{language!r} is not a valid language code (slides {slide_list})")
+
+    valid = {language: slides for language, slides in in_use.items() if is_language_tag(language)}
+    families = {language.split("-")[0].lower() for language in valid}
+
+    if default and is_language_tag(default):
+        families.add(default.split("-")[0].lower())
+
+    if len(families) > 1:
+        # the language on the most slides is the main one, so only the others list slide numbers
+        main = max(valid, key=lambda language: len(valid[language]))
+        parts = []
+
+        for language, slides in valid.items():
+            if language == main:
+                parts.append(f"{language} on {len(slides)} slide(s)")
+            else:
+                parts.append(f"{language} on slide(s) {', '.join(str(n) for n in sorted(slides))}")
+
+        problems.append("more than one language is used, check each is intended: " + "; ".join(parts))
+
+    return problems
+
+
+def set_language(prs, language):
+    """Set one language across the deck: its default text style, slides, layouts and masters.
+
+    Only lang attributes that already exist are replaced. A run without one inherits
+    the default, which is set here too, so every run ends up in the chosen language.
+    """
+    root = prs.part._element
+    parts = [root] + [slide._element for slide in prs.slides]
+
+    for master in prs.slide_masters:
+        parts.append(master._element)
+        parts.extend(layout._element for layout in master.slide_layouts)
+
+    for part in parts:
+        for element in part.iter(qn("a:rPr"), qn("a:endParaRPr"), qn("a:defRPr")):
+            if element.get("lang") is not None:
+                element.set("lang", language)
+
+    style = root.find(qn("p:defaultTextStyle"))
+
+    if style is None:
+        style = OxmlElement("p:defaultTextStyle")
+        later = root.find(qn("p:modifyVerifier"))
+        later = later if later is not None else root.find(qn("p:extLst"))
+
+        if later is not None:
+            later.addprevious(style)
+        else:
+            root.append(style)
+
+    default = style.find(qn("a:defPPr"))
+
+    if default is None:
+        default = OxmlElement("a:defPPr")
+        style.insert(0, default)
+
+    run_defaults = default.find(qn("a:defRPr"))
+
+    if run_defaults is None:
+        run_defaults = OxmlElement("a:defRPr")
+        default.append(run_defaults)
+
+    run_defaults.set("lang", language)
+
+
+def report_and_set_language(prs, f, filename, language=None):
+    # what was found is written first, so the report describes the deck as it was uploaded
+    for problem in find_language_problems(prs):
+        logging.warning(f"{filename}: language: {problem}")
+        f.write(f" \n Language (WCAG 3.1.1, 3.1.2): {problem} \n")
+
+    if language:
+        set_language(prs, language)
+        logging.info(f"{filename}: language set to {language}.")
+        f.write(f" \n Language set to {language} across the whole presentation. \n")
 
 
 def count_images_needing_captions(prs):

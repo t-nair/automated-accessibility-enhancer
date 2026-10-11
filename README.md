@@ -22,7 +22,8 @@ What happens to a file after it is uploaded:
 4. Every picture without usable alt text is described by a vision model, and the description is written into the file. Alt text that is just a filename (`photo.png`) or PowerPoint's own name for the picture (`Picture 3`) counts as missing. Alt text a person wrote is never overwritten
 3. Each slide is checked, and its title is moved to the front of the reading order. A real title placeholder (or a shape named "Title") is used when there is one. Otherwise `title_detection.py` guesses which text box is the title from its size, position and wording (see `title_research/README.md`)
 4. Every picture without alt text is described by a vision model, and the description is written into the file
-5. An updated `.pptx` and a report are written to the output folder
+5. The language is checked. A deck with no default language, an invalid language code or more than one language is listed in the report. If a language was chosen on the upload form, it is then set across the whole deck
+6. An updated `.pptx` and a report are written to the output folder
 
 See [docs/wcag-coverage.md](docs/wcag-coverage.md) for which WCAG 2.1 criteria are fixed, reported only, or not covered yet.
 
@@ -104,7 +105,7 @@ The results are written to `pptx_output`.
 python -m pytest tests/ -q
 ```
 
-There are 114 tests. They cover the helper functions (title detection, reading order, placeholder alt text), the whole pipeline running against the sample files in `Error Test PPTX`, processing a whole folder in one run, and every page and route on the website.
+There are 148 tests. They cover the helper functions (title detection, reading order, placeholder alt text), the whole pipeline running against the sample files in `Error Test PPTX`, processing a whole folder in one run, and every page and route on the website.
 
 The tests replace the image description model with a stand-in, so they finish in about a second instead of several minutes. Most of the time you see when running them is Python loading PyTorch, not the tests themselves. The tests use temporary folders, so running them never touches real uploads or the submissions file.
 

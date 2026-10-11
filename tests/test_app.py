@@ -482,3 +482,51 @@ def test_two_visitors_do_not_see_each_other(client):
     response = other_browser.get("/status")
 
     assert b"MyDeck.pptx" not in response.data
+
+
+def test_a_chosen_language_is_saved_with_the_submission(client):
+    data = {"presentation": make_upload("control_no_issues.pptx"), "language": "fr-FR"}
+    client.post("/upload", data=data)
+
+    assert app_module.get_submissions_for_owner(MY_OWNER_ID)[0]["language"] == "fr-FR"
+
+
+def test_no_language_chosen_leaves_the_files_language_alone(client):
+    data = {"presentation": make_upload("control_no_issues.pptx"), "language": ""}
+    client.post("/upload", data=data)
+
+    assert app_module.get_submissions_for_owner(MY_OWNER_ID)[0]["language"] is None
+
+
+def test_a_language_that_is_not_offered_is_rejected(client):
+    data = {"presentation": make_upload("control_no_issues.pptx"), "language": "xx<script>"}
+    response = client.post("/upload", data=data, follow_redirects=True)
+
+    assert b"choose a language from the list" in response.data
+    assert len(client.queued) == 0
+
+
+def test_the_saved_language_is_used_when_the_file_is_processed(client, monkeypatch):
+    add_submission("lang0001", status="queued", language="de-DE")
+    seen = []
+
+    def fake_process(saved_name, upload_folder, processed_folder, update_progress, language=None):
+        seen.append(language)
+        return True, None, None
+
+    monkeypatch.setattr(app_module, "process_one_file", fake_process)
+    app_module.process_one_submission("lang0001", "lang0001_Lecture.pptx")
+
+    assert seen == ["de-DE"]
+
+
+def test_a_database_from_before_the_language_option_is_upgraded(client):
+    connection = app_module.get_connection()
+    connection.execute("ALTER TABLE submissions DROP COLUMN language")
+    connection.commit()
+    connection.close()
+
+    app_module.setup_database()
+    add_submission("old00001", language="en-US")
+
+    assert app_module.get_submission("old00001")["language"] == "en-US"
