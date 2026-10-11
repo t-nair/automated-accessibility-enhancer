@@ -8,6 +8,8 @@ Which WCAG 2.1 Level A and AA success criteria the tool covers for slides (`.ppt
 
 All 50 WCAG 2.1 Level A and AA criteria are listed. HTML support is itself planned ([#41](https://github.com/t-nair/automated-accessibility-enhancer/issues/41)), so every HTML check is "Not covered" today.
 
+Rows marked "Needs a rendered page" are covered by the research note in [rendered-page.md](rendered-page.md).
+
 Update this table in the same pull request that adds or changes a check.
 
 | Criterion | Name | Level | Status | Notes | Issues |
