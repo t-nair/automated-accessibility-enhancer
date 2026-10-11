@@ -11,7 +11,7 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.oxml.ns import qn
 from pptx.oxml.xmlchemy import OxmlElement
 from PIL import Image
-from title_detection import guess_title
+from title_detection import guess_title, _ph_chain, DEFAULT_PT, FURNITURE_PH
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 
 # file for the record, console so a failure is visible the moment it happens
@@ -57,6 +57,10 @@ TITLE_PLACEHOLDERS = (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
 # PowerPoint keeps the language as a lang attribute such as "en-US", on text runs and on
 # the presentation's default text style. This is the shape of a usable value.
 LANGUAGE_TAG = re.compile(r"^[a-z]{2,3}(-[a-z0-9]{2,8})*$", re.IGNORECASE)
+
+# WCAG sets no minimum point size, but text this small fails 1.4.4 (Resize Text) in
+# practice and cannot be read when projected. Set MIN_FONT_PT to use a different cutoff.
+MIN_FONT_PT = float(os.environ.get("MIN_FONT_PT", "9"))
 
 CAPTION_MODEL_NAME = "Qwen/Qwen2-VL-2B-Instruct"
 
@@ -462,7 +466,7 @@ def process_one_file(filename, directory, new_directory, progress_callback=None,
 
     logging.info(
         f"Summary: {filename} | {counts['slides']} slide(s), {counts['titles_moved']} title(s) moved, "
-        f"{counts['captioned']} image(s) captioned | report: {alt_text_output_file} | "
+        f"{counts['captioned']} image(s) captioned, {counts['small_text']} shape(s) with small text | report: {alt_text_output_file} | "
         f"updated deck: {new_filepath} | {time.perf_counter() - started_at:.2f}s")
     return True, None, None
 
@@ -615,6 +619,85 @@ def get_run_languages(prs):
 
     return found
 
+def get_text_frames(shapes):
+    """Yield (shape, text_frame) for every text box, placeholder and table cell, inside groups too."""
+    for shape in shapes:
+        if get_shape_type(shape) == MSO_SHAPE_TYPE.GROUP:
+            yield from get_text_frames(shape.shapes)
+        elif shape.has_text_frame:
+            yield shape, shape.text_frame
+        elif shape.has_table:
+            for row in shape.table.rows:
+                for cell in row.cells:
+                    yield shape, cell.text_frame
+
+
+def get_style_chain(slide, shape, text_frame):
+    """Elements that can set a size for this text, nearest first: the shape's own
+    list style, then the layout and master placeholders, then the master's text styles."""
+    chain = [text_frame._txBody.find(qn("a:lstStyle"))]
+    style_name = "otherStyle"
+
+    if shape.is_placeholder:
+        for element in _ph_chain(shape):
+            if element.tag != qn("p:txStyles"):
+                chain.append(element.find(".//" + qn("a:lstStyle")))
+
+        if shape.placeholder_format.type in TITLE_PLACEHOLDERS:
+            style_name = "titleStyle"
+        elif shape.placeholder_format.type not in FURNITURE_PH:
+            style_name = "bodyStyle"
+
+    master_styles = slide.slide_layout.slide_master._element.find(qn("p:txStyles"))
+
+    if master_styles is not None:
+        chain.append(master_styles.find(qn("p:" + style_name)))
+
+    return chain
+
+
+def get_run_pt(run, level, chain, scale):
+    """Size in points the run will render at, after any autofit shrinking."""
+    if run.font.size is not None:
+        return run.font.size.pt * scale
+
+    for style in chain:
+        if style is None:
+            continue
+
+        default_run = style.find(qn(f"a:lvl{level + 1}pPr") + "/" + qn("a:defRPr"))
+
+        if default_run is not None and default_run.get("sz"):
+            return int(default_run.get("sz")) / 100 * scale
+
+    # ponytail: ignores the deck's defaultTextStyle, which is 18 pt in practice
+    return DEFAULT_PT * scale
+
+
+def find_small_text(slide, min_pt=MIN_FONT_PT):
+    """Return (shape name, smallest size in pt, text) for each shape with a run below min_pt."""
+    found = []
+
+    for shape, text_frame in get_text_frames(slide.shapes):
+        chain = get_style_chain(slide, shape, text_frame)
+        fit = text_frame._txBody.find(qn("a:bodyPr") + "/" + qn("a:normAutofit"))
+        scale = int(fit.get("fontScale")) / 100000 if fit is not None and fit.get("fontScale") else 1.0
+        sizes = []
+        words = []
+
+        for paragraph in text_frame.paragraphs:
+            for run in paragraph.runs:
+                pt = get_run_pt(run, paragraph.level, chain, scale)
+
+                if run.text.strip() and pt < min_pt:
+                    sizes.append(pt)
+                    words.append(run.text.strip())
+
+        if sizes:
+            found.append((shape.name, min(sizes), " ".join(words)))
+
+    return found
+
 
 def find_language_problems(prs):
     """List what is wrong with the deck's language, as short sentences for the report.
@@ -738,6 +821,7 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         progress_callback(captions_done, total_to_caption)
 
     untitled_slides = []
+    small_text_lines = []
 
     for slide_number, slide in enumerate(prs.slides, start=1):
 
@@ -745,6 +829,9 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
         if not has_title(slide):
             untitled_slides.append(slide_number)
+
+        for name, pt, text in find_small_text(slide):
+            small_text_lines.append(f"Slide {slide_number}, Shape: {name} - {pt:g} pt: {text[:60]!r}")
 
         if len(slide.shapes) == 0:
             logging.warning(f"{filename}: slide {slide_number} has no shapes, skipping title fix.")
@@ -778,9 +865,18 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         logging.warning(f"{filename}: slides with no title: {slide_list}")
         f.write(f" \n Slides with no title (WCAG 2.4.2): {slide_list} \n")
 
+    # report only: raising sizes can break the layout, so a person decides
+    if small_text_lines:
+        logging.warning(f"{filename}: {len(small_text_lines)} shape(s) with text below {MIN_FONT_PT:g} pt.")
+        f.write(f" \n Text below {MIN_FONT_PT:g} pt (WCAG 1.4.4): \n")
+
+        for line in small_text_lines:
+            f.write(f" - {line} \n")
+
     logging.info(f"{filename}: alt text pass done, {captions_done}/{total_to_caption} image(s) captioned.")
 
-    return {"slides": len(prs.slides), "titles_moved": titles_moved, "captioned": captions_done}
+    return {"slides": len(prs.slides), "titles_moved": titles_moved, "captioned": captions_done,
+            "small_text": len(small_text_lines)}
 
 
 def get_picture_alt_text(shape):

@@ -105,7 +105,7 @@ The results are written to `pptx_output`.
 python -m pytest tests/ -q
 ```
 
-There are 140 tests. They cover the helper functions (title detection, reading order, placeholder alt text), the whole pipeline running against the sample files in `Error Test PPTX`, processing a whole folder in one run, and every page and route on the website.
+There are 148 tests. They cover the helper functions (title detection, reading order, placeholder alt text), the whole pipeline running against the sample files in `Error Test PPTX`, processing a whole folder in one run, and every page and route on the website.
 
 The tests replace the image description model with a stand-in, so they finish in about a second instead of several minutes. Most of the time you see when running them is Python loading PyTorch, not the tests themselves. The tests use temporary folders, so running them never touches real uploads or the submissions file.
 
@@ -162,6 +162,7 @@ JSON file is left alone.
 ## Things to know
 
 - **Descriptions are a starting point, not a final answer.** The model sometimes gets things wrong, especially names and dates. In testing it read a coffin labelled "Nagy Imre" as "Nagy János", and once invented a label that was not in the picture at all. The report page is there so descriptions can be checked before a file is handed to students.
+- **Small text is reported, not changed.** The report lists text below 9 pt by slide, including sizes inherited from the layout and master. Raising sizes can break a layout, so a person decides. To use a different cutoff, set `MIN_FONT_PT` before starting, for example `$env:MIN_FONT_PT=12`.
 - **Visitors are kept apart, but there is no login.** Each browser is given a random id in a signed cookie, and you only see files submitted with that same cookie. Nobody can open or download someone else's file, even with the link. But this is not real security: there are no passwords, clearing your cookies loses your history, and anyone sharing a browser shares a history. Real use needs proper accounts or university sign-in.
 - **Progress is only kept in memory.** If the server restarts while a file is being processed, that file stays stuck showing "processing".
 - **One file is processed at a time.** This is on purpose, because running several descriptions at once uses more GPU memory than most laptops have.
@@ -170,7 +171,7 @@ JSON file is left alone.
 ---
 
 ## Possible Improvements
-- **PDF support**, which is the most common format after PowerPoint
+- **PDF support**, which is the most common format after PowerPoint (for PDFs exported from fixed decks, see [docs/pdf-export.md](docs/pdf-export.md))
 - **Real accounts**, or university sign-in, instead of the cookie the site uses now
 - **Better descriptions**, either from a larger model or a hosted one
 - **Configurable rules** for heading detection and structure inference
