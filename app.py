@@ -22,6 +22,19 @@ SECRET_KEY_FILE = "data/secret_key.txt"
 ALLOWED_EXTENSIONS = (".pptx", ".ppt")
 MAX_FILE_SIZE_MB = 50
 
+# the languages offered on the upload form, as the code written into the deck and the
+# name people see. Leaving it blank keeps whatever language each file already has.
+LANGUAGES = {
+    "en-US": "English (US)",
+    "en-GB": "English (UK)",
+    "es-ES": "Spanish",
+    "fr-FR": "French",
+    "de-DE": "German",
+    "zh-CN": "Chinese (Simplified)",
+    "ja-JP": "Japanese",
+    "ko-KR": "Korean",
+}
+
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 # these folders are not stored in git, so make sure they exist on a fresh copy
@@ -84,9 +97,17 @@ def setup_database():
             error_message TEXT,
             error_steps TEXT,
             retry_count INTEGER,
-            submitted_at TEXT
+            submitted_at TEXT,
+            language TEXT
         )
     """)
+
+    # databases made before the language option have no such column
+    columns = [row["name"] for row in connection.execute("PRAGMA table_info(submissions)")]
+
+    if "language" not in columns:
+        connection.execute("ALTER TABLE submissions ADD COLUMN language TEXT")
+
     connection.commit()
     connection.close()
 
@@ -108,8 +129,8 @@ def add_submission(submission):
     connection.execute("""
         INSERT INTO submissions
         (id, owner_id, original_filename, saved_filename, status,
-         alt_text_filename, error_message, error_steps, retry_count, submitted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         alt_text_filename, error_message, error_steps, retry_count, submitted_at, language)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         submission["id"],
         submission["owner_id"],
@@ -121,6 +142,7 @@ def add_submission(submission):
         json.dumps(submission["error_steps"]) if submission["error_steps"] else None,
         submission["retry_count"],
         submission["submitted_at"],
+        submission.get("language"),
     ))
     connection.commit()
     connection.close()
@@ -289,8 +311,11 @@ def process_one_submission(submission_id, saved_name):
     update_progress(0, 0)
     set_submission_status(submission_id, "processing")
 
+    # read from the database so a retry sets the same language as the first attempt
+    language = get_submission(submission_id)["language"]
+
     was_successful, error_message, error_steps = process_one_file(
-        saved_name, UPLOAD_FOLDER, PROCESSED_FOLDER, update_progress
+        saved_name, UPLOAD_FOLDER, PROCESSED_FOLDER, update_progress, language
     )
 
     if not was_successful:
@@ -345,11 +370,11 @@ def start_processing(submission_id, saved_name):
 
 @app.route("/")
 def home():
-    return render_template("index.html", max_file_size_mb=MAX_FILE_SIZE_MB)
+    return render_template("index.html", max_file_size_mb=MAX_FILE_SIZE_MB, languages=LANGUAGES)
 
 
 # gives back the new submission id, or None and a message saying what was wrong
-def save_one_upload(uploaded_file):
+def save_one_upload(uploaded_file, language=None):
     filename = uploaded_file.filename
 
     if not filename.lower().endswith(ALLOWED_EXTENSIONS):
@@ -380,7 +405,8 @@ def save_one_upload(uploaded_file):
         "error_message": None,
         "error_steps": None,
         "retry_count": 0,
-        "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M")
+        "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "language": language,
     })
 
     logging.info(f"Upload accepted: {filename} saved as {saved_name} (submission {submission_id}).")
@@ -406,11 +432,19 @@ def upload():
         flash("Please choose at least one file before submitting.")
         return redirect(url_for("home"))
 
+    # blank means leave each file's language alone
+    language = request.form.get("language", "") or None
+
+    if language is not None and language not in LANGUAGES:
+        logging.warning(f"Upload rejected: {language!r} is not one of the offered languages.")
+        flash("Please choose a language from the list.")
+        return redirect(url_for("home"))
+
     accepted_ids = []
     problems = []
 
     for uploaded_file in chosen_files:
-        submission_id, problem = save_one_upload(uploaded_file)
+        submission_id, problem = save_one_upload(uploaded_file, language)
 
         if submission_id is None:
             problems.append(problem)

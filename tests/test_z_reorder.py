@@ -4,6 +4,7 @@ import shutil
 
 import pytest
 from pptx import Presentation
+from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
 # make sure the tests can import the project files from the folder above
@@ -645,3 +646,134 @@ def test_a_deck_where_every_slide_has_a_title_reports_nothing(folders, fake_capt
 
     with open(os.path.join(output_folder, "titled_alt_text"), encoding="utf-8") as f:
         assert "no title" not in f.read()
+
+
+def run_pipeline_on(prs, folders, language=None):
+    """Save prs as a deck, process it, and return the report text and the updated deck."""
+    input_folder, output_folder = folders
+    prs.save(os.path.join(input_folder, "deck.pptx"))
+
+    ok, message, _ = z_reorder.process_one_file("deck.pptx", input_folder, output_folder, language=language)
+
+    with open(os.path.join(output_folder, "deck_alt_text"), encoding="utf-8") as f:
+        report = f.read()
+
+    return ok, message, report, Presentation(os.path.join(output_folder, "deck_updated.pptx"))
+
+
+def make_language_deck(run_languages):
+    """One text box per entry, each run marked with that lang value (None leaves it unmarked)."""
+    prs = Presentation()
+
+    for language in run_languages:
+        slide = prs.slides.add_slide(prs.slide_layouts[5])
+        slide.shapes.title.text = "A title"
+        run = slide.shapes.title.text_frame.paragraphs[0].runs[0]
+
+        if language is not None:
+            run._r.get_or_add_rPr().set("lang", language)
+
+    return prs
+
+
+def remove_default_language(prs):
+    default_style = prs.part._element.find(qn("p:defaultTextStyle"))
+    default_style.getparent().remove(default_style)
+
+
+def run_languages_of(prs):
+    return {run_props.get("lang") for slide in prs.slides for run_props in slide._element.iter(qn("a:rPr"))}
+
+
+def default_language_of(prs):
+    return z_reorder.get_default_language(prs)
+
+
+def test_a_deck_with_one_valid_language_reports_nothing_about_language(folders, fake_captions):
+    _, _, report, _ = run_pipeline_on(make_language_deck(["en-US", "en-US"]), folders)
+
+    assert "Language" not in report
+
+
+def test_regional_variants_of_one_language_are_not_mixed(folders, fake_captions):
+    _, _, report, _ = run_pipeline_on(make_language_deck(["en-US", "en-GB"]), folders)
+
+    assert "Language" not in report
+
+
+def test_a_deck_with_no_default_language_is_reported(folders, fake_captions):
+    prs = make_language_deck([None])
+    remove_default_language(prs)
+
+    _, _, report, _ = run_pipeline_on(prs, folders)
+
+    assert "Language (WCAG 3.1.1, 3.1.2): the presentation has no default language" in report
+
+
+def test_an_invalid_language_value_is_reported_with_its_slides(folders, fake_captions):
+    _, _, report, _ = run_pipeline_on(make_language_deck(["en-US", "english", "en-US", "english"]), folders)
+
+    assert "'english' is not a valid language code (slides 2, 4)" in report
+
+
+def test_mixed_languages_are_reported_with_the_slides_of_the_minority(folders, fake_captions):
+    _, _, report, _ = run_pipeline_on(make_language_deck(["en-US", "en-US", "fr-FR"]), folders)
+
+    assert "more than one language is used" in report
+    assert "en-US on 2 slide(s)" in report
+    assert "fr-FR on slide(s) 3" in report
+
+
+def test_reporting_alone_does_not_change_the_languages(folders, fake_captions):
+    prs = make_language_deck(["en-US", "fr-FR"])
+
+    _, _, _, updated = run_pipeline_on(prs, folders)
+
+    assert run_languages_of(updated) == {"en-US", "fr-FR"}
+
+
+def test_a_chosen_language_is_set_across_the_deck(folders, fake_captions):
+    prs = make_language_deck(["en-US", "fr-FR", "english", None])
+
+    ok, _, report, updated = run_pipeline_on(prs, folders, language="es-ES")
+
+    assert ok
+    assert default_language_of(updated) == "es-ES"
+    assert run_languages_of(updated) - {None} == {"es-ES"}
+    assert "Language set to es-ES" in report
+
+
+def test_setting_a_language_also_fixes_the_masters_and_layouts(folders, fake_captions):
+    _, _, _, updated = run_pipeline_on(make_language_deck(["en-US"]), folders, language="ja-JP")
+
+    for master in updated.slide_masters:
+        langs = {e.get("lang") for e in master._element.iter(qn("a:defRPr"), qn("a:rPr")) if e.get("lang")}
+        assert langs <= {"ja-JP"}
+
+
+def test_a_deck_with_no_default_style_gets_one_when_a_language_is_set(folders, fake_captions):
+    prs = make_language_deck([None])
+    remove_default_language(prs)
+
+    _, _, _, updated = run_pipeline_on(prs, folders, language="de-DE")
+
+    assert default_language_of(updated) == "de-DE"
+
+
+def test_a_deck_with_a_missing_language_is_fixed_and_no_longer_reported(folders, fake_captions):
+    prs = make_language_deck([None])
+    remove_default_language(prs)
+    _, _, _, updated = run_pipeline_on(prs, folders, language="en-US")
+
+    assert z_reorder.find_language_problems(updated) == []
+
+
+def test_a_language_that_is_not_a_code_is_refused(folders, fake_captions):
+    input_folder, output_folder = folders
+    make_language_deck(["en-US"]).save(os.path.join(input_folder, "deck.pptx"))
+
+    ok, message, steps = z_reorder.process_one_file("deck.pptx", input_folder, output_folder, language="English")
+
+    assert not ok
+    assert "not a valid language code" in message
+    assert steps
