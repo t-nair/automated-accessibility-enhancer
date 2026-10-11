@@ -169,7 +169,7 @@ JSON file is left alone.
 ---
 
 ## Possible Improvements
-- **PDF support**, which is the most common format after PowerPoint
+- **PDF support**, which is the most common format after PowerPoint (for PDFs exported from fixed decks, see [docs/pdf-export.md](docs/pdf-export.md))
 - **Real accounts**, or university sign-in, instead of the cookie the site uses now
 - **Better descriptions**, either from a larger model or a hosted one
 - **Configurable rules** for heading detection and structure inference
