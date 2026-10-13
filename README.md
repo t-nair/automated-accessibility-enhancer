@@ -26,6 +26,7 @@ What happens to a file after it is uploaded:
 6. An updated `.pptx` and a report are written to the output folder
 
 See [docs/wcag-coverage.md](docs/wcag-coverage.md) for which WCAG 2.1 criteria are fixed, reported only, or not covered yet.
+See [docs/rendered-page.md](docs/rendered-page.md) for the decision on checks that need a rendered page (contrast, keyboard, skip links).
 
 ---
 
