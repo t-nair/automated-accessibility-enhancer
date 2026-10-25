@@ -10,6 +10,8 @@ uploads/
 processed/
 pptx_output/
 pptx_input/
+output/
+.venv/
 
 # Runtime data and logs
 data/submissions.json
