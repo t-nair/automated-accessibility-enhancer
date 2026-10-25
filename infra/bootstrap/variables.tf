@@ -1,7 +1,7 @@
 variable "aws_region" {
   description = "Region the state bucket lives in. Every environment's backend has to name this same region."
   type        = string
-  default     = "us-west-2"
+  default     = "us-east-1"
 }
 
 variable "state_bucket_name" {
