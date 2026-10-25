@@ -17,7 +17,8 @@ COPY templates/ templates/
 COPY static/ static/
 
 # App Runner sends requests to this port and expects the app to be listening on
-# every interface, not just localhost
+# every interface, not just localhost. Other hosts pick their own port and pass
+# it in, so this is only the default.
 ENV PORT=8080
 EXPOSE 8080
 
@@ -28,4 +29,6 @@ ENV LOG_FILE=
 # waitress rather than Flask's own server, which says plainly that it is not
 # meant to face the internet. gunicorn is the usual choice but does not run on
 # Windows, and this has to be runnable on a laptop too.
-CMD ["waitress-serve", "--host=0.0.0.0", "--port=8080", "app:app"]
+# written as one line rather than a list so that the shell fills in PORT. A host
+# that assigns its own port, as Render does, is then served on the right one.
+CMD waitress-serve --host=0.0.0.0 --port=${PORT:-8080} app:app
