@@ -97,6 +97,23 @@ python z_reorder.py
 
 The results are written to `pptx_output`.
 
+## Running the PDF remediation pipeline
+
+PDF processing is a separate command-line pathway. It inspects every page and
+routes it as digital, scanned, hybrid, or uncertain. It detects likely columns,
+tables, images, and dense graphics. Digital text can be rebuilt semantically,
+including a conservative two-column ordering path. Scanned and hybrid pages use
+local English OCR and are always marked for human review.
+
+Uncertain pages, signed or encrypted files, and unsupported complex content
+stop for review rather than being silently rewritten.
+
+On Windows:
+
+```powershell
+./pipeline/setup.ps1 -Python python
+./.venv/Scripts/python.exe -m pipeline.cli "input.pdf" --output-dir output/remediation
+
 ---
 
 ## Running the tests
