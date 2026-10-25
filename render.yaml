@@ -1,0 +1,37 @@
+# Running the website on Render, which is free and needs no card.
+#
+# This is the local-storage version of the site: submissions live in a sqlite
+# file and the decks are processed in a background thread, the same way they are
+# on a laptop. Render replaces the disk whenever the service restarts, so
+# submissions do not survive one. That is fine for showing people the tool and
+# is not how it should be run for real: the AWS setup under infra/ is.
+services:
+  - type: web
+    name: accessibility-enhancer
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile.web
+    healthCheckPath: /
+    envVars:
+      # the website never opens a deck itself, but it does describe the pictures,
+      # so it needs to reach Bedrock. These two are the access key for the
+      # bedrock-captioning-only user, and are set in the Render dashboard rather
+      # than here, because this file is in the repository.
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+
+      # us-east-1 is where Bedrock answers. Asking any other region for these
+      # models comes back "the model does not exist".
+      - key: BEDROCK_REGION
+        value: us-east-1
+
+      # Signs the session cookie, which is how a visitor sees their own
+      # submissions and nobody else's. Generated once by Render and kept, so a
+      # restart does not log everybody out.
+      - key: SECRET_KEY
+        generateValue: true
+
+      - key: DEBUG
+        value: "false"
