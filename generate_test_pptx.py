@@ -124,6 +124,19 @@ def make_issue_all_issues_combined():
     save_presentation(prs, "issue_all_issues_combined.pptx")
 
 
+def make_sim_prezi_export():
+    # Simulation, not real Prezi output: see docs/prezi.md. Guessed shape of a
+    # "Download PPTX" export: every frame is one slide holding a full-slide
+    # picture with no alt text and no title shape.
+    prs = Presentation()
+    for _ in range(3):
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        picture = slide.shapes.add_picture(make_placeholder_image(), 0, 0, prs.slide_width, prs.slide_height)
+        clear_alt_text(picture)
+
+    save_presentation(prs, "sim_prezi_export.pptx")
+
+
 def make_corrupt_empty_file():
     output_path = os.path.join(OUTPUT_FOLDER, "corrupt_empty_file.pptx")
     with open(output_path, "wb"):
@@ -179,6 +192,7 @@ if __name__ == "__main__":
     make_issue_empty_slide_no_shapes()
     make_issue_multiple_images_no_alt_text()
     make_issue_all_issues_combined()
+    make_sim_prezi_export()
 
     make_corrupt_empty_file()
     make_corrupt_random_bytes()

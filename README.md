@@ -18,9 +18,14 @@ What happens to a file after it is uploaded:
 
 1. The file is saved and added to a queue
 2. If it is an older `.ppt`, LibreOffice converts it to `.pptx` first
-3. Each slide is checked, and any shape named "Title" is moved to the front of the reading order
+3. Each slide is checked, and its title shapes are moved to the front of the reading order. A shape counts as a title if it is a real title placeholder, or if its name contains "title" in any capitalisation (subtitles are left alone). Running a file a second time changes nothing
+4. Every picture without usable alt text is described by a vision model, and the description is written into the file. Alt text that is just a filename (`photo.png`) or PowerPoint's own name for the picture (`Picture 3`) counts as missing. Alt text a person wrote is never overwritten
+3. Each slide is checked, and its title is moved to the front of the reading order. A real title placeholder (or a shape named "Title") is used when there is one. Otherwise `title_detection.py` guesses which text box is the title from its size, position and wording (see `title_research/README.md`)
 4. Every picture without alt text is described by a vision model, and the description is written into the file
-5. An updated `.pptx` and a report are written to the output folder
+5. The language is checked. A deck with no default language, an invalid language code or more than one language is listed in the report. If a language was chosen on the upload form, it is then set across the whole deck
+6. An updated `.pptx` and a report are written to the output folder
+
+See [docs/wcag-coverage.md](docs/wcag-coverage.md) for which WCAG 2.1 criteria are fixed, reported only, or not covered yet.
 
 ---
 
@@ -94,43 +99,17 @@ The results are written to `pptx_output`.
 
 ---
 
-## Running the PDF decision pipeline
-
-PDF processing is a separate command-line pathway; the existing PowerPoint
-workflow and website remain unchanged. The PDF pathway inspects every page and
-routes it as digital, scanned, hybrid, or uncertain. Digital text can be rebuilt
-semantically. Scanned and hybrid pages use local English OCR and are always
-marked for human review. Uncertain pages, signed or encrypted files, and digital
-pages with images stop for review instead of guessing.
-
-On Windows, the reproducible setup is:
-
-```powershell
-./pipeline/setup.ps1 -Python python
-./.venv/Scripts/python.exe -m pipeline.cli "input.pdf" --output-dir output/remediation
-```
-
-Chrome, Chromium, or Edge is required to export the tagged companion PDF. Set
-`PDF_PIPELINE_CHROME` when the browser is not in a standard location or on
-`PATH`. The command never overwrites the source. It writes an accessible HTML
-companion, a tagged PDF reconstruction, and a JSON evidence manifest.
-
-See [the PDF pipeline guide](pipeline/README.md) and [the exact OCR pathway](docs/OCR_PATHWAY.md).
-
----
-
 ## Running the tests
 
 ```
 python -m pytest tests/ -q
 ```
 
-There are 74 PowerPoint and website tests plus 18 focused PDF tests. They cover
-the helper functions, the whole PowerPoint pipeline running against the sample
-files in `Error Test PPTX`, every website page and route, and the PDF routing,
-OCR evidence, semantic reconstruction, and structure-verification boundaries.
+There are 148 tests. They cover the helper functions (title detection, reading order, placeholder alt text), the whole pipeline running against the sample files in `Error Test PPTX`, processing a whole folder in one run, and every page and route on the website.
 
 The tests replace the image description model with a stand-in, so they finish in about a second instead of several minutes. Most of the time you see when running them is Python loading PyTorch, not the tests themselves. The tests use temporary folders, so running them never touches real uploads or the submissions file.
+
+GitHub Actions runs these tests on every pull request (`.github/workflows/ci.yml`). The tests stub out the model, so CI never downloads it, but it still installs PyTorch and Transformers because `z_reorder.py` imports them. Not covered yet: a test that runs the real model, and any deployment step. Add a deploy workflow once there is a hosting target.
 
 To make more sample files to test with:
 
@@ -145,6 +124,9 @@ python generate_test_pptx.py
 ```
 app.py                  the website: uploading, status, reports, downloads
 z_reorder.py            the pipeline: converting, fixing titles, writing descriptions
+title_detection.py      finds the title of a slide that has no real title placeholder
+title_model.joblib      the small trained model title_detection.py uses
+title_research/         how the title model was chosen: data, experiments, results
 generate_test_pptx.py   makes the sample files used by the tests
 
 templates/
@@ -159,14 +141,6 @@ static/
 tests/
     test_z_reorder.py   pipeline tests
     test_app.py         website tests
-    test_pdf_*.py       PDF routing, OCR, reconstruction, and verification tests
-
-pipeline/
-    cli.py              PDF command-line entry point
-    inspect_pdf.py      deterministic page inspection and routing
-    ocr.py              offline OCR for scanned and hybrid pages
-    rebuild_html.py     semantic reconstruction
-    chrome_pdf.py       tagged PDF export and browser discovery
 
 Error Test PPTX/        sample files, both broken and valid
 uploads/                files as they are uploaded
@@ -174,6 +148,9 @@ processed/              finished files and reports
 data/submissions.db     the list of submissions (SQLite)
 data/secret_key.txt     used to sign the visitor cookie
 pipeline.log            what happened, including every failure
+
+pptx_input/             folder the script reads (you create it)
+pptx_output/            where the script writes fixed files and reports
 ```
 
 The database is made automatically the first time the app runs. If an older
@@ -185,6 +162,7 @@ JSON file is left alone.
 ## Things to know
 
 - **Descriptions are a starting point, not a final answer.** The model sometimes gets things wrong, especially names and dates. In testing it read a coffin labelled "Nagy Imre" as "Nagy János", and once invented a label that was not in the picture at all. The report page is there so descriptions can be checked before a file is handed to students.
+- **Small text is reported, not changed.** The report lists text below 9 pt by slide, including sizes inherited from the layout and master. Raising sizes can break a layout, so a person decides. To use a different cutoff, set `MIN_FONT_PT` before starting, for example `$env:MIN_FONT_PT=12`.
 - **Visitors are kept apart, but there is no login.** Each browser is given a random id in a signed cookie, and you only see files submitted with that same cookie. Nobody can open or download someone else's file, even with the link. But this is not real security: there are no passwords, clearing your cookies loses your history, and anyone sharing a browser shares a history. Real use needs proper accounts or university sign-in.
 - **Progress is only kept in memory.** If the server restarts while a file is being processed, that file stays stuck showing "processing".
 - **One file is processed at a time.** This is on purpose, because running several descriptions at once uses more GPU memory than most laptops have.
@@ -193,7 +171,7 @@ JSON file is left alone.
 ---
 
 ## Possible Improvements
-- **Broader PDF remediation**, especially tables, figures, mathematical notation, and uncertain pages
+- **PDF support**, which is the most common format after PowerPoint (for PDFs exported from fixed decks, see [docs/pdf-export.md](docs/pdf-export.md))
 - **Real accounts**, or university sign-in, instead of the cookie the site uses now
 - **Better descriptions**, either from a larger model or a hosted one
 - **Configurable rules** for heading detection and structure inference

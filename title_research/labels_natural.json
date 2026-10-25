@@ -1,0 +1,31 @@
+{
+  "_doc": "Hand labels for slides with NO title placeholder. Value = index of the title shape in the slide's text-shape list, -1 = the slide has no title, -2 = ambiguous (excluded from scoring). Labeled by Claude from a compact dump of each slide, not by the deck authors.",
+  "DataMining_Day6.pptx#12": -1,
+  "Slides-for-LED-PV-inclass (1).pptx#2": -1,
+  "Slides-for-LED-PV-inclass (1).pptx#4": -1,
+  "test.pptx#1": 0, "test.pptx#2": 0, "test.pptx#3": 0, "test.pptx#4": 0, "test.pptx#6": 0, "test.pptx#7": 0,
+  "test.pptx#8": 0, "test.pptx#9": 0, "test.pptx#10": 0, "test.pptx#11": 0, "test.pptx#12": 0, "test.pptx#13": 0,
+  "test.pptx#14": 0, "test.pptx#15": 0, "test.pptx#16": 0, "test.pptx#17": 0, "test.pptx#18": 0, "test.pptx#22": 0,
+
+  "045.pptx#5": -1, "106.pptx#14": 0, "156.pptx#1": 0, "071.pptx#13": -1, "047.pptx#12": 1, "017.pptx#23": 7,
+  "044.pptx#13": -1, "132.pptx#21": -1, "108.pptx#21": 0, "017.pptx#11": 0, "131.pptx#3": 2, "037.pptx#42": 3,
+  "066.pptx#3": 2, "059.pptx#3": 0, "065.pptx#1": 0, "017.pptx#1": 0, "104.pptx#10": 0, "116.pptx#6": 1,
+  "059.pptx#15": 0, "017.pptx#26": 6, "132.pptx#7": 0, "146.pptx#1": -1, "033.pptx#8": 0, "106.pptx#8": 0,
+  "041.pptx#9": -1, "049.pptx#2": 0, "078.pptx#1": 1, "108.pptx#19": -1, "108.pptx#11": 0, "156.pptx#20": 0,
+  "010.pptx#9": 0, "033.pptx#13": -1, "127.pptx#12": 1, "031.pptx#5": -1, "108.pptx#8": 0, "078.pptx#16": 0,
+  "079.pptx#18": 1, "091.pptx#4": -2, "132.pptx#26": 1, "151.pptx#4": 0, "116.pptx#5": 0, "049.pptx#13": 0,
+  "028.pptx#8": -1, "108.pptx#5": 0, "045.pptx#15": -1, "128.pptx#1": 0, "122.pptx#13": 0, "044.pptx#3": -2,
+  "099.pptx#1": -2, "056.pptx#2": 0, "088.pptx#5": -1, "045.pptx#23": -1, "044.pptx#15": -1, "064.pptx#24": -1,
+  "029.pptx#4": -1,
+
+  "033.pptx#6": 0, "127.pptx#13": 1, "045.pptx#10": -1, "132.pptx#9": 0, "103.pptx#7": 1, "059.pptx#16": 0,
+  "065.pptx#18": 0, "140.pptx#26": -1, "002.pptx#15": 0, "047.pptx#19": -2, "041.pptx#5": -1, "097.pptx#3": -1,
+  "106.pptx#11": 0, "045.pptx#19": -1, "126.pptx#11": 1, "061.pptx#2": -2, "065.pptx#17": 1, "049.pptx#8": 0,
+  "144.pptx#15": 0, "091.pptx#3": 0, "078.pptx#8": 2, "132.pptx#28": 0, "017.pptx#27": 2, "015.pptx#14": -1,
+  "059.pptx#6": 0, "002.pptx#3": 0, "033.pptx#18": -1, "044.pptx#6": -2, "059.pptx#28": 1, "118.pptx#8": 1,
+  "108.pptx#24": 0, "116.pptx#16": 0, "144.pptx#3": 0, "151.pptx#9": 0, "054.pptx#3": 0, "045.pptx#18": -1,
+  "077.pptx#1": 0, "126.pptx#14": 1, "033.pptx#5": -1, "132.pptx#22": -1, "033.pptx#7": 2, "045.pptx#8": -1,
+  "103.pptx#6": 1, "047.pptx#15": 0, "072.pptx#1": 0, "010.pptx#14": 0, "059.pptx#25": 0, "039.pptx#45": 0,
+  "103.pptx#5": 1, "066.pptx#9": 2, "091.pptx#1": 0, "002.pptx#7": 0, "065.pptx#15": 1, "017.pptx#6": 1,
+  "047.pptx#17": -2, "127.pptx#18": 1, "132.pptx#4": 0, "033.pptx#2": 0, "156.pptx#4": 0, "051.pptx#1": 0
+}

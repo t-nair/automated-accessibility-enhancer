@@ -4,6 +4,7 @@ import uuid
 import queue
 import sqlite3
 import logging
+import time
 import threading
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, jsonify, session
@@ -20,6 +21,19 @@ OLD_SUBMISSIONS_FILE = "data/submissions.json"
 SECRET_KEY_FILE = "data/secret_key.txt"
 ALLOWED_EXTENSIONS = (".pptx", ".ppt")
 MAX_FILE_SIZE_MB = 50
+
+# the languages offered on the upload form, as the code written into the deck and the
+# name people see. Leaving it blank keeps whatever language each file already has.
+LANGUAGES = {
+    "en-US": "English (US)",
+    "en-GB": "English (UK)",
+    "es-ES": "Spanish",
+    "fr-FR": "French",
+    "de-DE": "German",
+    "zh-CN": "Chinese (Simplified)",
+    "ja-JP": "Japanese",
+    "ko-KR": "Korean",
+}
 
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
@@ -83,9 +97,17 @@ def setup_database():
             error_message TEXT,
             error_steps TEXT,
             retry_count INTEGER,
-            submitted_at TEXT
+            submitted_at TEXT,
+            language TEXT
         )
     """)
+
+    # databases made before the language option have no such column
+    columns = [row["name"] for row in connection.execute("PRAGMA table_info(submissions)")]
+
+    if "language" not in columns:
+        connection.execute("ALTER TABLE submissions ADD COLUMN language TEXT")
+
     connection.commit()
     connection.close()
 
@@ -107,8 +129,8 @@ def add_submission(submission):
     connection.execute("""
         INSERT INTO submissions
         (id, owner_id, original_filename, saved_filename, status,
-         alt_text_filename, error_message, error_steps, retry_count, submitted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         alt_text_filename, error_message, error_steps, retry_count, submitted_at, language)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         submission["id"],
         submission["owner_id"],
@@ -120,6 +142,7 @@ def add_submission(submission):
         json.dumps(submission["error_steps"]) if submission["error_steps"] else None,
         submission["retry_count"],
         submission["submitted_at"],
+        submission.get("language"),
     ))
     connection.commit()
     connection.close()
@@ -283,15 +306,22 @@ def process_one_submission(submission_id, saved_name):
     def update_progress(captions_done, total_to_caption):
         processing_progress[submission_id] = {"done": captions_done, "total": total_to_caption}
 
+    logging.info(f"Submission {submission_id}: processing {saved_name} (queue depth {work_queue.qsize()}).")
+    started_at = time.perf_counter()
     update_progress(0, 0)
     set_submission_status(submission_id, "processing")
 
+    # read from the database so a retry sets the same language as the first attempt
+    language = get_submission(submission_id)["language"]
+
     was_successful, error_message, error_steps = process_one_file(
-        saved_name, UPLOAD_FOLDER, PROCESSED_FOLDER, update_progress
+        saved_name, UPLOAD_FOLDER, PROCESSED_FOLDER, update_progress, language
     )
 
     if not was_successful:
-        logging.error(f"Submission {submission_id} ({saved_name}) failed processing: {error_message}")
+        logging.error(f"Submission {submission_id} ({saved_name}) failed processing: {error_message} Steps shown to user: {error_steps}")
+    else:
+        logging.info(f"Submission {submission_id} ({saved_name}) finished in {time.perf_counter() - started_at:.1f}s.")
 
     if was_successful:
         alt_text_filename = os.path.splitext(saved_name)[0] + "_alt_text"
@@ -316,8 +346,15 @@ def worker_loop():
             process_one_submission(submission_id, saved_name)
         except Exception as e:
             # a crash here must not kill the worker, or nothing else would ever process
-            logging.error(f"Unexpected problem while processing submission {submission_id}. Error: {e}")
-            set_submission_status(submission_id, "error")
+            logging.exception(f"Unexpected problem while processing submission {submission_id}. Error: {e}")
+            processing_progress.pop(submission_id, None)
+
+            # without a message the page would show an error with no explanation
+            update_submission(submission_id, {
+                "status": "error",
+                "error_message": "Something unexpected went wrong while processing this file.",
+                "error_steps": ["Please try again. If it keeps failing, contact the accessibility team."],
+            })
 
         work_queue.task_done()
 
@@ -333,11 +370,11 @@ def start_processing(submission_id, saved_name):
 
 @app.route("/")
 def home():
-    return render_template("index.html", max_file_size_mb=MAX_FILE_SIZE_MB)
+    return render_template("index.html", max_file_size_mb=MAX_FILE_SIZE_MB, languages=LANGUAGES)
 
 
 # gives back the new submission id, or None and a message saying what was wrong
-def save_one_upload(uploaded_file):
+def save_one_upload(uploaded_file, language=None):
     filename = uploaded_file.filename
 
     if not filename.lower().endswith(ALLOWED_EXTENSIONS):
@@ -368,8 +405,11 @@ def save_one_upload(uploaded_file):
         "error_message": None,
         "error_steps": None,
         "retry_count": 0,
-        "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M")
+        "submitted_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "language": language,
     })
+
+    logging.info(f"Upload accepted: {filename} saved as {saved_name} (submission {submission_id}).")
 
     # the pipeline can take a while, so files are queued and worked through in the
     # background instead of making the browser wait
@@ -392,11 +432,19 @@ def upload():
         flash("Please choose at least one file before submitting.")
         return redirect(url_for("home"))
 
+    # blank means leave each file's language alone
+    language = request.form.get("language", "") or None
+
+    if language is not None and language not in LANGUAGES:
+        logging.warning(f"Upload rejected: {language!r} is not one of the offered languages.")
+        flash("Please choose a language from the list.")
+        return redirect(url_for("home"))
+
     accepted_ids = []
     problems = []
 
     for uploaded_file in chosen_files:
-        submission_id, problem = save_one_upload(uploaded_file)
+        submission_id, problem = save_one_upload(uploaded_file, language)
 
         if submission_id is None:
             problems.append(problem)
@@ -469,6 +517,7 @@ def retry_submission(submission_id):
     submission = get_my_submission(submission_id)
 
     if submission is None:
+        logging.warning(f"Retry requested for a submission that is unknown or belongs to someone else: {submission_id}")
         flash("That submission could not be found, so it cannot be retried.")
         return redirect(url_for("status"))
     if submission["status"] != "error":
@@ -477,6 +526,7 @@ def retry_submission(submission_id):
 
     filename = submission["saved_filename"]
     if not os.path.exists(os.path.join(UPLOAD_FOLDER, filename)):
+        logging.error(f"Retry of submission {submission_id} impossible: {filename} is gone from {UPLOAD_FOLDER}.")
         update_submission(submission_id, {
             "error_message": "The original upload is no longer available for retry.",
             "error_steps": ["Go back to the submit page and upload the presentation again."],
@@ -541,6 +591,8 @@ def download(submission_id):
         logging.error(f"Download requested for submission {submission_id}, but {processed_path} is missing on disk.")
         flash("We couldn't find the processed file. Please try submitting it again.")
         return redirect(url_for("details", submission_id=submission_id))
+
+    logging.info(f"Download of submission {submission_id} as {download_name}.")
 
     return send_from_directory(
         PROCESSED_FOLDER,

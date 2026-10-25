@@ -3,12 +3,15 @@ import sys
 import shutil
 
 import pytest
+from lxml import etree
 from pptx import Presentation
-from pptx.util import Inches
+from pptx.oxml.ns import qn
+from pptx.util import Inches, Pt
 
 # make sure the tests can import the project files from the folder above
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import title_detection
 import z_reorder
 
 FIXTURE_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Error Test PPTX")
@@ -210,6 +213,29 @@ def test_processing_writes_an_updated_file_and_a_report(folders, fake_captions):
     assert os.path.exists(os.path.join(output_folder, "issue_missing_alt_text_alt_text"))
 
 
+def test_the_report_is_not_empty(folders, fake_captions):
+    input_folder, output_folder = folders
+    copy_fixture("issue_missing_alt_text.pptx", input_folder)
+
+    z_reorder.process_one_file("issue_missing_alt_text.pptx", input_folder, output_folder)
+
+    with open(os.path.join(output_folder, "issue_missing_alt_text_alt_text"), encoding="utf-8") as f:
+        assert "Alt Text:" in f.read()
+
+
+def test_processing_logs_a_summary_with_the_output_paths(folders, fake_captions, caplog):
+    input_folder, output_folder = folders
+    copy_fixture("issue_missing_alt_text.pptx", input_folder)
+
+    with caplog.at_level("INFO"):
+        z_reorder.process_one_file("issue_missing_alt_text.pptx", input_folder, output_folder)
+
+    summary = [m for m in caplog.messages if m.startswith("Summary:")]
+    assert len(summary) == 1
+    assert "image(s) captioned" in summary[0]
+    assert "issue_missing_alt_text_updated.pptx" in summary[0]
+
+
 def test_the_original_upload_is_moved_out_of_the_input_folder(folders, fake_captions):
     input_folder, output_folder = folders
     copy_fixture("control_no_issues.pptx", input_folder)
@@ -406,6 +432,76 @@ def test_a_real_title_placeholder_is_found_even_when_renamed():
     assert z_reorder.is_title(title)
 
 
+# --- titles that are not marked as titles --------------------------------------
+
+BODY_TEXT = ("Evaporation, condensation and precipitation move water between the oceans, "
+             "the air and the land, and the cycle repeats continuously.")
+
+
+def build_text_slide(boxes):
+    """A blank slide with plain text boxes given as (name, text, top in inches, font size), in z-order."""
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    for name, text, top, size in boxes:
+        box = slide.shapes.add_textbox(Inches(0.7), Inches(top), Inches(8.6), Inches(1))
+        box.name = name
+        box.text_frame.text = text
+        box.text_frame.paragraphs[0].runs[0].font.size = Pt(size)
+
+    return slide
+
+
+def test_a_title_typed_into_a_text_box_is_found_and_moved_to_the_front():
+    # nothing here says "title": not the placeholder type, not the shape name
+    slide = build_text_slide([("Body", BODY_TEXT, 2.5, 18), ("TextBox 7", "The Water Cycle", 0.4, 40)])
+
+    assert z_reorder.move_titles_to_front(slide) == 1
+    assert names_in_order(slide) == ["TextBox 7", "Body"]
+
+
+def test_a_title_below_a_small_kicker_line_is_still_found():
+    slide = build_text_slide([("Body", BODY_TEXT, 3.0, 18),
+                              ("Kicker", "CHAPTER 3", 0.2, 12),
+                              ("Heading", "Evaporation and Rain", 0.7, 36)])
+
+    z_reorder.move_titles_to_front(slide)
+
+    assert names_in_order(slide)[0] == "Heading"
+
+
+def test_a_real_title_is_never_second_guessed(monkeypatch):
+    monkeypatch.setattr(z_reorder, "guess_title", lambda slide: pytest.fail("guess_title was called"))
+    slide = build_slide(["Body 1", "Title 1"])
+
+    assert z_reorder.move_titles_to_front(slide) == 1
+
+
+def test_a_slide_of_only_body_paragraphs_gets_no_guessed_title():
+    slide = build_text_slide([("A", BODY_TEXT, 1.0, 18), ("B", BODY_TEXT, 3.5, 18)])
+
+    assert z_reorder.move_titles_to_front(slide) == 0
+    assert names_in_order(slide) == ["A", "B"]
+
+
+def test_a_master_without_text_styles_does_not_break_font_size_lookup():
+    # p:txStyles is optional; a placeholder with no size anywhere used to hit None.tag
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    master = slide.part.slide_layout.slide_master._element
+    master.remove(master.find(title_detection.qn("p:txStyles")))
+
+    assert title_detection.effective_pt(slide.shapes.title) == title_detection.DEFAULT_PT
+
+
+def test_a_missing_title_model_leaves_the_slide_alone(monkeypatch):
+    monkeypatch.setattr(title_detection, "_model", False)
+    slide = build_text_slide([("Body", BODY_TEXT, 2.5, 18), ("TextBox 7", "The Water Cycle", 0.4, 40)])
+
+    assert z_reorder.move_titles_to_front(slide) == 0
+    assert names_in_order(slide) == ["Body", "TextBox 7"]
+
+
 # --- alt text that is not really alt text ------------------------------------
 
 
@@ -501,3 +597,288 @@ def test_an_unresolvable_shape_type_does_not_raise():
     assert z_reorder.get_shape_type(Unresolvable()) is None
     assert not z_reorder.is_picture(Unresolvable())
     assert not z_reorder.needs_caption(Unresolvable())
+
+
+def test_a_whole_folder_is_processed_in_one_run(folders, fake_captions):
+    input_folder, output_folder = folders
+    for filename in WORKING_FILES + BROKEN_FILES:
+        copy_fixture(filename, input_folder)
+
+    z_reorder.accessibility_processor(input_folder, output_folder)
+
+    for filename in WORKING_FILES:
+        assert os.path.exists(os.path.join(output_folder, filename.replace(".pptx", "_updated.pptx")))
+
+    for filename in BROKEN_FILES:
+        assert not os.path.exists(os.path.join(output_folder, filename.replace(".pptx", "_updated.pptx")))
+
+    prs = Presentation(os.path.join(output_folder, "issue_title_not_first_in_order_updated.pptx"))
+    assert [shape.name for shape in prs.slides[0].shapes] == ["Title 1", "Body Text 1"]
+
+
+def make_deck_with_untitled_slides(path):
+    prs = Presentation()
+    titled = prs.slides.add_slide(prs.slide_layouts[5])
+    titled.shapes.title.text = "Has a title"
+    prs.slides.add_slide(prs.slide_layouts[5])  # title placeholder left empty
+    prs.slides.add_slide(prs.slide_layouts[6])  # blank layout, no shapes
+    prs.save(path)
+
+
+def test_slides_without_a_title_are_listed_in_the_report(folders, fake_captions):
+    input_folder, output_folder = folders
+    make_deck_with_untitled_slides(os.path.join(input_folder, "untitled.pptx"))
+
+    z_reorder.process_one_file("untitled.pptx", input_folder, output_folder)
+
+    with open(os.path.join(output_folder, "untitled_alt_text"), encoding="utf-8") as f:
+        report = f.read()
+
+    assert "Slides with no title (WCAG 2.4.2): 2, 3" in report
+
+
+def test_a_deck_where_every_slide_has_a_title_reports_nothing(folders, fake_captions):
+    input_folder, output_folder = folders
+    prs = Presentation()
+    prs.slides.add_slide(prs.slide_layouts[5]).shapes.title.text = "Only slide"
+    prs.save(os.path.join(input_folder, "titled.pptx"))
+
+    z_reorder.process_one_file("titled.pptx", input_folder, output_folder)
+
+    with open(os.path.join(output_folder, "titled_alt_text"), encoding="utf-8") as f:
+        assert "no title" not in f.read()
+
+
+def run_pipeline_on(prs, folders, language=None):
+    """Save prs as a deck, process it, and return the report text and the updated deck."""
+    input_folder, output_folder = folders
+    prs.save(os.path.join(input_folder, "deck.pptx"))
+
+    ok, message, _ = z_reorder.process_one_file("deck.pptx", input_folder, output_folder, language=language)
+
+    with open(os.path.join(output_folder, "deck_alt_text"), encoding="utf-8") as f:
+        report = f.read()
+
+    return ok, message, report, Presentation(os.path.join(output_folder, "deck_updated.pptx"))
+
+
+def make_language_deck(run_languages):
+    """One text box per entry, each run marked with that lang value (None leaves it unmarked)."""
+    prs = Presentation()
+
+    for language in run_languages:
+        slide = prs.slides.add_slide(prs.slide_layouts[5])
+        slide.shapes.title.text = "A title"
+        run = slide.shapes.title.text_frame.paragraphs[0].runs[0]
+
+        if language is not None:
+            run._r.get_or_add_rPr().set("lang", language)
+
+    return prs
+
+
+def remove_default_language(prs):
+    default_style = prs.part._element.find(qn("p:defaultTextStyle"))
+    default_style.getparent().remove(default_style)
+
+
+def run_languages_of(prs):
+    return {run_props.get("lang") for slide in prs.slides for run_props in slide._element.iter(qn("a:rPr"))}
+
+
+def default_language_of(prs):
+    return z_reorder.get_default_language(prs)
+
+
+def test_a_deck_with_one_valid_language_reports_nothing_about_language(folders, fake_captions):
+    _, _, report, _ = run_pipeline_on(make_language_deck(["en-US", "en-US"]), folders)
+
+    assert "Language" not in report
+
+
+def test_regional_variants_of_one_language_are_not_mixed(folders, fake_captions):
+    _, _, report, _ = run_pipeline_on(make_language_deck(["en-US", "en-GB"]), folders)
+
+    assert "Language" not in report
+
+
+def test_a_deck_with_no_default_language_is_reported(folders, fake_captions):
+    prs = make_language_deck([None])
+    remove_default_language(prs)
+
+    _, _, report, _ = run_pipeline_on(prs, folders)
+
+    assert "Language (WCAG 3.1.1, 3.1.2): the presentation has no default language" in report
+
+
+def test_an_invalid_language_value_is_reported_with_its_slides(folders, fake_captions):
+    _, _, report, _ = run_pipeline_on(make_language_deck(["en-US", "english", "en-US", "english"]), folders)
+
+    assert "'english' is not a valid language code (slides 2, 4)" in report
+
+
+def test_mixed_languages_are_reported_with_the_slides_of_the_minority(folders, fake_captions):
+    _, _, report, _ = run_pipeline_on(make_language_deck(["en-US", "en-US", "fr-FR"]), folders)
+
+    assert "more than one language is used" in report
+    assert "en-US on 2 slide(s)" in report
+    assert "fr-FR on slide(s) 3" in report
+
+
+def test_reporting_alone_does_not_change_the_languages(folders, fake_captions):
+    prs = make_language_deck(["en-US", "fr-FR"])
+
+    _, _, _, updated = run_pipeline_on(prs, folders)
+
+    assert run_languages_of(updated) == {"en-US", "fr-FR"}
+
+
+def test_a_chosen_language_is_set_across_the_deck(folders, fake_captions):
+    prs = make_language_deck(["en-US", "fr-FR", "english", None])
+
+    ok, _, report, updated = run_pipeline_on(prs, folders, language="es-ES")
+
+    assert ok
+    assert default_language_of(updated) == "es-ES"
+    assert run_languages_of(updated) - {None} == {"es-ES"}
+    assert "Language set to es-ES" in report
+
+
+def test_setting_a_language_also_fixes_the_masters_and_layouts(folders, fake_captions):
+    _, _, _, updated = run_pipeline_on(make_language_deck(["en-US"]), folders, language="ja-JP")
+
+    for master in updated.slide_masters:
+        langs = {e.get("lang") for e in master._element.iter(qn("a:defRPr"), qn("a:rPr")) if e.get("lang")}
+        assert langs <= {"ja-JP"}
+
+
+def test_a_deck_with_no_default_style_gets_one_when_a_language_is_set(folders, fake_captions):
+    prs = make_language_deck([None])
+    remove_default_language(prs)
+
+    _, _, _, updated = run_pipeline_on(prs, folders, language="de-DE")
+
+    assert default_language_of(updated) == "de-DE"
+
+
+def test_a_deck_with_a_missing_language_is_fixed_and_no_longer_reported(folders, fake_captions):
+    prs = make_language_deck([None])
+    remove_default_language(prs)
+    _, _, _, updated = run_pipeline_on(prs, folders, language="en-US")
+
+    assert z_reorder.find_language_problems(updated) == []
+
+
+def test_a_language_that_is_not_a_code_is_refused(folders, fake_captions):
+    input_folder, output_folder = folders
+    make_language_deck(["en-US"]).save(os.path.join(input_folder, "deck.pptx"))
+
+    ok, message, steps = z_reorder.process_one_file("deck.pptx", input_folder, output_folder, language="English")
+
+    assert not ok
+    assert "not a valid language code" in message
+    assert steps
+
+
+
+def add_sized_box(slide, text, size):
+    box = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(5), Inches(1))
+    run = box.text_frame.paragraphs[0].add_run()
+    run.text = text
+    run.font.size = Pt(size)
+
+    return box
+
+
+def small_text_names(slide, **kwargs):
+    return [name for name, _, _ in z_reorder.find_small_text(slide, **kwargs)]
+
+
+def test_an_explicit_size_below_the_minimum_is_flagged():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    small = add_sized_box(slide, "Footnote", 8)
+    add_sized_box(slide, "Body", 9)
+
+    assert z_reorder.find_small_text(slide) == [(small.name, 8, "Footnote")]
+
+
+def test_a_size_inherited_from_the_master_is_flagged():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.placeholders[1].text = "Body text"
+    master = slide.slide_layout.slide_master._element
+    body_style = master.find(title_detection.qn("p:txStyles")).find(title_detection.qn("p:bodyStyle"))
+    body_style.find(title_detection.qn("a:lvl1pPr")).find(title_detection.qn("a:defRPr")).set("sz", "800")
+
+    assert small_text_names(slide) == [slide.placeholders[1].name]
+
+
+def test_a_size_inherited_from_the_layout_wins_over_the_master():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.placeholders[1].text = "Body text"
+    layout_body = [p for p in slide.slide_layout.placeholders if p.placeholder_format.idx == 1][0]
+    list_style = layout_body._element.find(".//" + title_detection.qn("a:lstStyle"))
+    level_one = etree.SubElement(list_style, title_detection.qn("a:lvl1pPr"))
+    etree.SubElement(level_one, title_detection.qn("a:defRPr")).set("sz", "700")
+
+    assert small_text_names(slide) == [slide.placeholders[1].name]
+
+
+def test_inherited_sizes_at_normal_size_are_not_flagged():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.shapes.title.text = "Title"
+    slide.placeholders[1].text = "Body text"
+
+    assert z_reorder.find_small_text(slide) == []
+
+
+def test_a_shrink_on_overflow_scale_can_push_text_below_the_minimum():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    box = add_sized_box(slide, "Squeezed", 12)
+    body_pr = box.text_frame._txBody.find(title_detection.qn("a:bodyPr"))
+    fit = etree.SubElement(body_pr, title_detection.qn("a:normAutofit"))
+    fit.set("fontScale", "60000")
+
+    assert small_text_names(slide) == [box.name]
+
+
+def test_the_minimum_can_be_changed():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    box = add_sized_box(slide, "Twelve point", 12)
+
+    assert small_text_names(slide) == []
+    assert small_text_names(slide, min_pt=14) == [box.name]
+
+
+def test_small_text_in_a_table_cell_is_flagged():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    table = slide.shapes.add_table(1, 1, Inches(1), Inches(1), Inches(4), Inches(1))
+    run = table.table.cell(0, 0).text_frame.paragraphs[0].add_run()
+    run.text = "Cell"
+    run.font.size = Pt(7)
+
+    assert small_text_names(slide) == [table.name]
+
+
+def test_small_text_is_listed_by_slide_in_the_report(folders, fake_captions):
+    input_folder, output_folder = folders
+    prs = Presentation()
+    prs.slides.add_slide(prs.slide_layouts[6])
+    add_sized_box(prs.slides.add_slide(prs.slide_layouts[6]), "Tiny source note", 8)
+    prs.save(os.path.join(input_folder, "small.pptx"))
+
+    z_reorder.process_one_file("small.pptx", input_folder, output_folder)
+
+    with open(os.path.join(output_folder, "small_alt_text"), encoding="utf-8") as f:
+        report = f.read()
+
+    assert "Text below 9 pt (WCAG 1.4.4)" in report
+    assert "Slide 2, Shape: TextBox" in report
+    assert "8 pt: 'Tiny source note'" in report
+    assert "Slide 1," not in report

@@ -8,11 +8,15 @@ import subprocess
 import torch
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
+from pptx.oxml.ns import qn
+from pptx.oxml.xmlchemy import OxmlElement
 from PIL import Image
+from title_detection import guess_title, _ph_chain, DEFAULT_PT, FURNITURE_PH
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 
+# file for the record, console so a failure is visible the moment it happens
 logging.basicConfig(
-    filename="pipeline.log",
+    handlers=[logging.FileHandler("pipeline.log", encoding="utf-8"), logging.StreamHandler()],
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
@@ -49,6 +53,14 @@ AUTO_SHAPE_NAME = re.compile(rf"^(?:{_AUTO_SHAPE_NAME}|\({_AUTO_SHAPE_NAME}\))$"
 
 # a real title placeholder is authoritative, the shape name is only a fallback
 TITLE_PLACEHOLDERS = (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
+
+# PowerPoint keeps the language as a lang attribute such as "en-US", on text runs and on
+# the presentation's default text style. This is the shape of a usable value.
+LANGUAGE_TAG = re.compile(r"^[a-z]{2,3}(-[a-z0-9]{2,8})*$", re.IGNORECASE)
+
+# WCAG sets no minimum point size, but text this small fails 1.4.4 (Resize Text) in
+# practice and cannot be read when projected. Set MIN_FONT_PT to use a different cutoff.
+MIN_FONT_PT = float(os.environ.get("MIN_FONT_PT", "9"))
 
 CAPTION_MODEL_NAME = "Qwen/Qwen2-VL-2B-Instruct"
 
@@ -101,6 +113,7 @@ def get_caption_model():
         caption_model = Qwen2VLForConditionalGeneration.from_pretrained(CAPTION_MODEL_NAME, dtype=CAPTION_DTYPE)
         caption_model.to(CAPTION_DEVICE)
         caption_model.eval()
+        logging.info("Captioning model is loaded and ready.")
 
     return caption_processor, caption_model
 
@@ -173,6 +186,7 @@ def build_caption_prompt(slide_text):
 def generate_image_caption(shape, slide_text=""):
     image_bytes = shape.image.blob
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    logging.info(f"Captioning {shape.name} ({image.width}x{image.height}px, {len(image_bytes) // 1024} KB).")
 
     processor, model = get_caption_model()
     prompt = build_caption_prompt(slide_text)
@@ -192,9 +206,14 @@ def generate_image_caption(shape, slide_text=""):
     new_tokens = output[0][len(inputs.input_ids[0]):]
     caption = processor.decode(new_tokens, skip_special_tokens=True)
 
-    logging.info(f"Caption generated in {seconds_taken:.2f} seconds on {CAPTION_DEVICE}.")
+    caption = tidy_caption(caption)
+    logging.info(f"Caption generated in {seconds_taken:.2f} seconds on {CAPTION_DEVICE}: {caption!r}")
 
-    return tidy_caption(caption)
+    # an empty caption would be written into the deck as blank alt text, so fail loudly instead
+    if not caption:
+        raise ValueError("the model returned an empty caption")
+
+    return caption
 
 
 def accessibility_processor(directory, new_directory):
@@ -211,8 +230,18 @@ def accessibility_processor(directory, new_directory):
         logging.warning("No .pptx files found. Nothing to process.")
         return
 
+    failed = []
+
     for filename in pptx_files:
-        process_one_file(filename, directory, new_directory)
+        was_successful, message, _ = process_one_file(filename, directory, new_directory)
+
+        if not was_successful:
+            logging.error(f"{filename} failed: {message}")
+            failed.append(filename)
+
+    logging.info(
+        f"Run summary: {len(pptx_files) - len(failed)}/{len(pptx_files)} file(s) processed into "
+        f"{new_directory}. Failed: {', '.join(failed) or 'none'}")
 
 
 def find_libreoffice():
@@ -253,7 +282,9 @@ def convert_ppt_to_pptx(filepath, directory):
     converted_path = os.path.join(directory, os.path.splitext(os.path.basename(filepath))[0] + ".pptx")
 
     if not os.path.exists(converted_path):
-        logging.error(f"Conversion of {filepath} did not produce a file. LibreOffice said: {result.stderr[:300]}")
+        logging.error(
+            f"Conversion of {filepath} did not produce a file (exit code {result.returncode}). "
+            f"LibreOffice said: {result.stderr[:300]!r} {result.stdout[:300]!r}")
         return None, "We could not convert this older .ppt file.", [
             "Open the file in PowerPoint to check that it still opens.",
             "Use File > Save As to save it as a .pptx file.",
@@ -329,8 +360,10 @@ def open_presentation(filepath, filename):
             logging.warning(f"{filename} looks like it's in use (attempt {attempt}/{MAX_ATTEMPTS}). Retrying...")
             time.sleep(RETRY_DELAY_SECONDS)
         except Exception as e:
+            logging.exception(f"{filename} could not be parsed as a presentation.")
             return None, e
 
+    logging.error(f"{filename} is still locked after {MAX_ATTEMPTS} attempts.")
     return None, open_error
 
 
@@ -354,15 +387,22 @@ def move_original_to_output(directory, new_directory, filename):
     return move_error
 
 
-def process_one_file(filename, directory, new_directory, progress_callback=None):
+def process_one_file(filename, directory, new_directory, progress_callback=None, language=None):
+    # language is optional. When given, it is set across the whole deck, e.g. "en-US".
+    if language is not None and not is_language_tag(language):
+        logging.error(f"{filename} not processed: {language!r} is not a language code.")
+        return False, f"{language!r} is not a valid language code.", ["Use a code such as en-US or fr-FR."]
+
     os.makedirs(new_directory, exist_ok=True)
     filepath = os.path.join(directory, filename)
+    started_at = time.perf_counter()
     logging.info(f"Starting: {filename}")
 
     problem = check_upload_is_usable(filepath, filename)
 
     if problem is not None:
         message, steps = problem
+        logging.error(f"{filename} rejected before processing: {message}")
         return False, message, steps
 
     # an old .ppt has to be converted before python-pptx can read it. The converted
@@ -373,6 +413,7 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
         converted_filepath, convert_message, convert_steps = convert_ppt_to_pptx(filepath, directory)
 
         if converted_filepath is None:
+            logging.error(f"{filename} could not be converted: {convert_message}")
             return False, convert_message, convert_steps
 
         filepath = converted_filepath
@@ -380,17 +421,19 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
     prs, open_error = open_presentation(filepath, filename)
 
     if prs is None:
-        logging.error(f"Could not open {filename}. Error: {open_error}")
+        logging.error(f"Could not open {filename}. Error: {open_error!r}")
         message, steps = get_open_error_details(open_error)
         return False, message, steps
 
+    logging.info(f"{filename}: opened {len(prs.slides)} slide(s) in {time.perf_counter() - started_at:.2f}s, checking titles and alt text.")
     alt_text_output_file = os.path.join(new_directory, os.path.splitext(filename)[0] + "_alt_text")
 
     try:
         with open(alt_text_output_file, "w", encoding="utf-8") as f:
-            fix_titles_and_log_alt_text(prs, f, filename, progress_callback)
+            counts = fix_titles_and_log_alt_text(prs, f, filename, progress_callback)
+            report_and_set_language(prs, f, filename, language)
     except Exception as e:
-        logging.error(f"Something went wrong processing shapes in {filename}. Error: {e}")
+        logging.exception(f"Something went wrong processing shapes in {filename}. Error: {e}")
         return False, "We opened your file, but something went wrong while checking your slides for accessibility issues.", [
             "This can happen with unusual slide layouts or embedded objects.",
             "Try saving a fresh copy in PowerPoint and uploading it again.",
@@ -401,7 +444,7 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
     try:
         prs.save(new_filepath)
     except Exception as e:
-        logging.error(f"Could not save updated file for {filename}. Error: {e}")
+        logging.exception(f"Could not save updated file for {filename}. Error: {e}")
         return False, "We updated your slides, but something went wrong saving the new file.", [
             "This is often temporary. Please try submitting it again.",
         ]
@@ -421,7 +464,10 @@ def process_one_file(filename, directory, new_directory, progress_callback=None)
             "Please try submitting it again.",
         ]
 
-    logging.info(f"Finished: {filename}")
+    logging.info(
+        f"Summary: {filename} | {counts['slides']} slide(s), {counts['titles_moved']} title(s) moved, "
+        f"{counts['captioned']} image(s) captioned, {counts['small_text']} shape(s) with small text | report: {alt_text_output_file} | "
+        f"updated deck: {new_filepath} | {time.perf_counter() - started_at:.2f}s")
     return True, None, None
 
 
@@ -433,7 +479,8 @@ def get_shape_type(shape):
     """
     try:
         return shape.shape_type
-    except (NotImplementedError, ValueError):
+    except (NotImplementedError, ValueError) as e:
+        logging.debug(f"Shape type unavailable for {getattr(shape, 'name', '?')}: {e!r}")
         return None
 
 
@@ -453,8 +500,8 @@ def is_title(shape):
     try:
         if shape.is_placeholder and shape.placeholder_format.type in TITLE_PLACEHOLDERS:
             return True
-    except (AttributeError, KeyError, ValueError):
-        pass
+    except (AttributeError, KeyError, ValueError) as e:
+        logging.debug(f"Could not read placeholder type of {shape.name}: {e!r}")
 
     name = shape.name.lower()
 
@@ -505,6 +552,14 @@ def move_titles_to_front(slide):
     titles = [shape for shape in shapes if is_title(shape)]
 
     if not titles:
+        # no title placeholder and no shape named "title", so the author probably typed the
+        # title into a text box or a body placeholder. Ask the model which shape reads like one.
+        guess = guess_title(slide)
+        guessed_name = guess.name if guess is not None else "no title"
+        logging.info(f"No title placeholder; model guessed {guessed_name!r}.")
+        titles = [shape for shape in shapes if guess is not None and shape._element is guess._element]
+
+    if not titles:
         return 0
 
     # already in the right order, so nothing to do. This also makes a second run
@@ -523,6 +578,228 @@ def move_titles_to_front(slide):
     return len(titles)
 
 
+def has_title(slide):
+    """True if the slide has a title shape with actual text in it.
+
+    An empty title placeholder ("Click to add title") counts as no title: it
+    announces nothing to a screen reader, and PowerPoint's checker flags it too.
+    """
+    for shape in slide.shapes:
+        if is_title(shape) and shape.has_text_frame and shape.text_frame.text.strip():
+            return True
+
+    return False
+
+
+def is_language_tag(language):
+    return LANGUAGE_TAG.match(language) is not None
+
+
+def get_default_language(prs):
+    """The language on the presentation's default text style, or None if it has none."""
+    default = prs.part._element.find(
+        qn("p:defaultTextStyle") + "/" + qn("a:defPPr") + "/" + qn("a:defRPr"))
+
+    return default.get("lang") if default is not None else None
+
+
+def get_run_languages(prs):
+    """Map each lang value set on a slide's text runs to the slide numbers that use it.
+
+    Runs with no lang attribute inherit the default, so they are left out.
+    """
+    found = {}
+
+    for slide_number, slide in enumerate(prs.slides, start=1):
+        for run_props in slide._element.iter(qn("a:rPr")):
+            language = run_props.get("lang")
+
+            if language and slide_number not in found.setdefault(language, []):
+                found[language].append(slide_number)
+
+    return found
+
+def get_text_frames(shapes):
+    """Yield (shape, text_frame) for every text box, placeholder and table cell, inside groups too."""
+    for shape in shapes:
+        if get_shape_type(shape) == MSO_SHAPE_TYPE.GROUP:
+            yield from get_text_frames(shape.shapes)
+        elif shape.has_text_frame:
+            yield shape, shape.text_frame
+        elif shape.has_table:
+            for row in shape.table.rows:
+                for cell in row.cells:
+                    yield shape, cell.text_frame
+
+
+def get_style_chain(slide, shape, text_frame):
+    """Elements that can set a size for this text, nearest first: the shape's own
+    list style, then the layout and master placeholders, then the master's text styles."""
+    chain = [text_frame._txBody.find(qn("a:lstStyle"))]
+    style_name = "otherStyle"
+
+    if shape.is_placeholder:
+        for element in _ph_chain(shape):
+            if element.tag != qn("p:txStyles"):
+                chain.append(element.find(".//" + qn("a:lstStyle")))
+
+        if shape.placeholder_format.type in TITLE_PLACEHOLDERS:
+            style_name = "titleStyle"
+        elif shape.placeholder_format.type not in FURNITURE_PH:
+            style_name = "bodyStyle"
+
+    master_styles = slide.slide_layout.slide_master._element.find(qn("p:txStyles"))
+
+    if master_styles is not None:
+        chain.append(master_styles.find(qn("p:" + style_name)))
+
+    return chain
+
+
+def get_run_pt(run, level, chain, scale):
+    """Size in points the run will render at, after any autofit shrinking."""
+    if run.font.size is not None:
+        return run.font.size.pt * scale
+
+    for style in chain:
+        if style is None:
+            continue
+
+        default_run = style.find(qn(f"a:lvl{level + 1}pPr") + "/" + qn("a:defRPr"))
+
+        if default_run is not None and default_run.get("sz"):
+            return int(default_run.get("sz")) / 100 * scale
+
+    # ponytail: ignores the deck's defaultTextStyle, which is 18 pt in practice
+    return DEFAULT_PT * scale
+
+
+def find_small_text(slide, min_pt=MIN_FONT_PT):
+    """Return (shape name, smallest size in pt, text) for each shape with a run below min_pt."""
+    found = []
+
+    for shape, text_frame in get_text_frames(slide.shapes):
+        chain = get_style_chain(slide, shape, text_frame)
+        fit = text_frame._txBody.find(qn("a:bodyPr") + "/" + qn("a:normAutofit"))
+        scale = int(fit.get("fontScale")) / 100000 if fit is not None and fit.get("fontScale") else 1.0
+        sizes = []
+        words = []
+
+        for paragraph in text_frame.paragraphs:
+            for run in paragraph.runs:
+                pt = get_run_pt(run, paragraph.level, chain, scale)
+
+                if run.text.strip() and pt < min_pt:
+                    sizes.append(pt)
+                    words.append(run.text.strip())
+
+        if sizes:
+            found.append((shape.name, min(sizes), " ".join(words)))
+
+    return found
+
+
+def find_language_problems(prs):
+    """List what is wrong with the deck's language, as short sentences for the report.
+
+    WCAG 3.1.1 wants one language for the page, and 3.1.2 wants any passage in a
+    different language marked. A deck mixing languages is reported rather than
+    called wrong, because a marked French quotation is exactly what 3.1.2 asks for.
+    The text itself is not checked, so a deck wrongly marked en-US is not caught.
+    """
+    problems = []
+    default = get_default_language(prs)
+    in_use = get_run_languages(prs)
+
+    if not default:
+        problems.append("the presentation has no default language, so screen readers have to guess")
+    elif not is_language_tag(default):
+        problems.append(f"the presentation's default language {default!r} is not a valid language code")
+
+    for language, slides in in_use.items():
+        if not is_language_tag(language):
+            slide_list = ", ".join(str(n) for n in sorted(slides))
+            problems.append(f"{language!r} is not a valid language code (slides {slide_list})")
+
+    valid = {language: slides for language, slides in in_use.items() if is_language_tag(language)}
+    families = {language.split("-")[0].lower() for language in valid}
+
+    if default and is_language_tag(default):
+        families.add(default.split("-")[0].lower())
+
+    if len(families) > 1:
+        # the language on the most slides is the main one, so only the others list slide numbers
+        main = max(valid, key=lambda language: len(valid[language]))
+        parts = []
+
+        for language, slides in valid.items():
+            if language == main:
+                parts.append(f"{language} on {len(slides)} slide(s)")
+            else:
+                parts.append(f"{language} on slide(s) {', '.join(str(n) for n in sorted(slides))}")
+
+        problems.append("more than one language is used, check each is intended: " + "; ".join(parts))
+
+    return problems
+
+
+def set_language(prs, language):
+    """Set one language across the deck: its default text style, slides, layouts and masters.
+
+    Only lang attributes that already exist are replaced. A run without one inherits
+    the default, which is set here too, so every run ends up in the chosen language.
+    """
+    root = prs.part._element
+    parts = [root] + [slide._element for slide in prs.slides]
+
+    for master in prs.slide_masters:
+        parts.append(master._element)
+        parts.extend(layout._element for layout in master.slide_layouts)
+
+    for part in parts:
+        for element in part.iter(qn("a:rPr"), qn("a:endParaRPr"), qn("a:defRPr")):
+            if element.get("lang") is not None:
+                element.set("lang", language)
+
+    style = root.find(qn("p:defaultTextStyle"))
+
+    if style is None:
+        style = OxmlElement("p:defaultTextStyle")
+        later = root.find(qn("p:modifyVerifier"))
+        later = later if later is not None else root.find(qn("p:extLst"))
+
+        if later is not None:
+            later.addprevious(style)
+        else:
+            root.append(style)
+
+    default = style.find(qn("a:defPPr"))
+
+    if default is None:
+        default = OxmlElement("a:defPPr")
+        style.insert(0, default)
+
+    run_defaults = default.find(qn("a:defRPr"))
+
+    if run_defaults is None:
+        run_defaults = OxmlElement("a:defRPr")
+        default.append(run_defaults)
+
+    run_defaults.set("lang", language)
+
+
+def report_and_set_language(prs, f, filename, language=None):
+    # what was found is written first, so the report describes the deck as it was uploaded
+    for problem in find_language_problems(prs):
+        logging.warning(f"{filename}: language: {problem}")
+        f.write(f" \n Language (WCAG 3.1.1, 3.1.2): {problem} \n")
+
+    if language:
+        set_language(prs, language)
+        logging.info(f"{filename}: language set to {language}.")
+        f.write(f" \n Language set to {language} across the whole presentation. \n")
+
+
 def count_images_needing_captions(prs):
     total = 0
 
@@ -537,11 +814,24 @@ def count_images_needing_captions(prs):
 def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     total_to_caption = count_images_needing_captions(prs)
     captions_done = 0
+    titles_moved = 0
+    logging.info(f"{filename}: {total_to_caption} image(s) need a caption.")
 
     if progress_callback is not None:
         progress_callback(captions_done, total_to_caption)
 
+    untitled_slides = []
+    small_text_lines = []
+
     for slide_number, slide in enumerate(prs.slides, start=1):
+
+        logging.debug(f"{filename}: slide {slide_number} has {len(slide.shapes)} shape(s).")
+
+        if not has_title(slide):
+            untitled_slides.append(slide_number)
+
+        for name, pt, text in find_small_text(slide):
+            small_text_lines.append(f"Slide {slide_number}, Shape: {name} - {pt:g} pt: {text[:60]!r}")
 
         if len(slide.shapes) == 0:
             logging.warning(f"{filename}: slide {slide_number} has no shapes, skipping title fix.")
@@ -550,6 +840,8 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         slide_text = get_slide_text(slide)
 
         moved = move_titles_to_front(slide)
+
+        titles_moved += moved
 
         if moved:
             logging.info(f"{filename}: slide {slide_number} moved {moved} title shape(s) to the front.")
@@ -566,6 +858,25 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
                 if progress_callback is not None:
                     progress_callback(captions_done, total_to_caption)
+
+    # report only: a generated title would be a guess, so a person adds the real one
+    if untitled_slides:
+        slide_list = ", ".join(str(n) for n in untitled_slides)
+        logging.warning(f"{filename}: slides with no title: {slide_list}")
+        f.write(f" \n Slides with no title (WCAG 2.4.2): {slide_list} \n")
+
+    # report only: raising sizes can break the layout, so a person decides
+    if small_text_lines:
+        logging.warning(f"{filename}: {len(small_text_lines)} shape(s) with text below {MIN_FONT_PT:g} pt.")
+        f.write(f" \n Text below {MIN_FONT_PT:g} pt (WCAG 1.4.4): \n")
+
+        for line in small_text_lines:
+            f.write(f" - {line} \n")
+
+    logging.info(f"{filename}: alt text pass done, {captions_done}/{total_to_caption} image(s) captioned.")
+
+    return {"slides": len(prs.slides), "titles_moved": titles_moved, "captioned": captions_done,
+            "small_text": len(small_text_lines)}
 
 
 def get_picture_alt_text(shape):
@@ -593,8 +904,8 @@ def write_alt_text_line(shape, f, slide_text=""):
             try:
                 alt_text = generate_image_caption(shape, slide_text)
             except Exception as e:
-                logging.warning(f"Could not generate a caption for {shape.name}. Falling back to a placeholder. Error: {e}")
                 alt_text = f"Image {shape.name}"
+                logging.exception(f"Could not generate a caption for {shape.name}. Falling back to the placeholder {alt_text!r}. Error: {e}")
 
             set_picture_alt_text(shape, alt_text)
             f.write(f" \n Shape: {shape.name} \n - Alt Text: {alt_text} \n")
