@@ -31,8 +31,8 @@
             {% endif %}
         {% endwith %}
 
-        <h2>Submit PowerPoint Files</h2>
-        <p>Upload one or more .pptx or .ppt files below. We'll fix the slide reading order so screen readers announce titles first, write descriptions for images that are missing them, and give you a report of what we found, including any problems with the presentation's language.</p>
+        <h2>Submit PowerPoint or PDF Files</h2>
+        <p>Upload one or more .pptx or .ppt files below. We'll fix the slide reading order so screen readers announce titles first, write descriptions for images that are missing them, and give you a report of what we found, including any problems with the presentation's language. PDFs are rebuilt as a tagged PDF with a title and language; scanned pages are read with OCR and marked for a person to check.</p>
 
         <form action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data" id="upload-form">
 
@@ -43,13 +43,13 @@
                 </svg>
 
                 <span class="drop-zone-title">Drag and drop or click here</span>
-                <span class="drop-zone-hint">to upload your PowerPoint files (.pptx or .ppt, max {{ max_file_size_mb }} MB each)</span>
+                <span class="drop-zone-hint">to upload your PowerPoint or PDF files (.pptx, .ppt or .pdf, max {{ max_file_size_mb }} MB each)</span>
 
                 <input
                     type="file"
                     id="presentation"
                     name="presentation"
-                    accept=".pptx,.ppt"
+                    accept=".pptx,.ppt,.pdf"
                     multiple
                     required
                     class="visually-hidden"

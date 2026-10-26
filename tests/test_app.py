@@ -165,7 +165,7 @@ def test_uploading_a_wrong_file_type_is_rejected(client):
     data = {"presentation": (io.BytesIO(b"just some notes"), "notes.txt")}
     response = client.post("/upload", data=data, follow_redirects=True)
 
-    assert b"only .pptx and .ppt files are accepted" in response.data
+    assert b"only .pptx, .ppt and .pdf files are accepted" in response.data
     assert len(client.queued) == 0
 
 
@@ -530,3 +530,96 @@ def test_a_database_from_before_the_language_option_is_upgraded(client):
     add_submission("old00001", language="en-US")
 
     assert app_module.get_submission("old00001")["language"] == "en-US"
+
+def test_uploading_a_pdf_creates_a_submission(client):
+    data = {"presentation": (io.BytesIO(b"%PDF-1.7 a small pdf"), "Handout.pdf")}
+    client.post("/upload", data=data)
+
+    submission = app_module.get_submissions_for_owner(MY_OWNER_ID)[0]
+    assert submission["saved_filename"].endswith("_Handout.pdf")
+    assert client.queued == [submission["id"]]
+
+
+def fake_manifest(title, language):
+    return {
+        "inspection": {
+            "title": title,
+            "language": language,
+            "pages": [{"page_number": 1, "route": "digital", "complex_content": [], "needs_review": False}],
+        },
+        "reviewRequired": False,
+        "limitations": ["It is not a conformance certification."],
+    }
+
+
+def test_a_pdf_goes_through_the_pdf_pipeline(client, monkeypatch):
+    import pipeline.cli
+
+    add_submission("pdf00001", status="queued", original_filename="Handout.pdf",
+                   saved_filename="pdf00001_Handout.pdf", language="fr-FR")
+    seen = []
+
+    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None):
+        seen.append((source.name, fallback_title, language))
+        on_stage("inspect", "complete", "Inspected 1 pages.")
+        return fake_manifest(fallback_title, language)
+
+    monkeypatch.setattr(pipeline.cli, "run", fake_run)
+    monkeypatch.setattr(app_module, "process_one_file", lambda *args: pytest.fail("the PowerPoint pipeline got a PDF"))
+    app_module.process_one_submission("pdf00001", "pdf00001_Handout.pdf")
+
+    # the title comes from the name the person uploaded, not the id-prefixed saved name
+    assert seen == [("pdf00001_Handout.pdf", "Handout", "fr-FR")]
+    assert app_module.get_submission("pdf00001")["status"] == "done"
+
+    response = client.get("/details/pdf00001")
+    assert b"Page 1: digital" in response.data
+
+
+def test_a_pdf_waiting_on_image_approval_explains_why(client, monkeypatch):
+    import json
+    import pipeline.cli
+
+    add_submission("pdf00002", status="queued", original_filename="Figures.pdf", saved_filename="pdf00002_Figures.pdf")
+
+    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None):
+        output_dir.mkdir(parents=True)
+        manifest = {"imageRemediation": {"issues": ["Page 1 image 1 is not approved."]}}
+        (output_dir / "pdf00002_Figures.remediation.json").write_text(json.dumps(manifest))
+        raise RuntimeError("Image remediation requires approval. Review C:/server/path.json")
+
+    monkeypatch.setattr(pipeline.cli, "run", fake_run)
+    app_module.process_one_submission("pdf00002", "pdf00002_Figures.pdf")
+
+    submission = app_module.get_submission("pdf00002")
+    assert submission["status"] == "error"
+    assert "need a person to approve" in submission["error_message"]
+    # the server's own paths are not shown to the person
+    assert "server/path" not in submission["error_message"]
+
+
+def test_downloading_a_finished_pdf_sends_the_tagged_pdf(client):
+    add_submission("pdf00003", original_filename="Handout.pdf", saved_filename="pdf00003_Handout.pdf")
+    folder = os.path.join(app_module.PROCESSED_FOLDER, "pdf00003_Handout_pdf")
+    os.makedirs(folder)
+
+    with open(os.path.join(folder, "pdf00003_Handout.accessible.pdf"), "wb") as f:
+        f.write(b"%PDF-1.7")
+
+    response = client.get("/download/pdf00003")
+
+    assert response.status_code == 200
+    assert "accessible_Handout.pdf" in response.headers["Content-Disposition"]
+
+
+def test_deleting_a_pdf_removes_its_results_folder(client):
+    add_submission("pdf00004", original_filename="Handout.pdf", saved_filename="pdf00004_Handout.pdf")
+    folder = os.path.join(app_module.PROCESSED_FOLDER, "pdf00004_Handout_pdf")
+    os.makedirs(folder)
+
+    with open(os.path.join(folder, "pdf00004_Handout.accessible.html"), "w") as f:
+        f.write("<html></html>")
+
+    client.post("/delete/pdf00004", follow_redirects=True)
+
+    assert not os.path.exists(folder)

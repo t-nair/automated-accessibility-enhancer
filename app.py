@@ -5,8 +5,10 @@ import queue
 import sqlite3
 import logging
 import time
+import shutil
 import threading
 from datetime import datetime, timedelta
+from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, jsonify, session
 from werkzeug.utils import secure_filename
 from z_reorder import process_one_file
@@ -19,7 +21,7 @@ DATA_FOLDER = "data"
 DATABASE_FILE = "data/submissions.db"
 OLD_SUBMISSIONS_FILE = "data/submissions.json"
 SECRET_KEY_FILE = "data/secret_key.txt"
-ALLOWED_EXTENSIONS = (".pptx", ".ppt")
+ALLOWED_EXTENSIONS = (".pptx", ".ppt", ".pdf")
 MAX_FILE_SIZE_MB = 50
 
 # the languages offered on the upload form, as the code written into the deck and the
@@ -202,6 +204,32 @@ def delete_submission_files(submission):
         except OSError as e:
             logging.warning(f"Could not delete {path}. Error: {e}")
 
+    # a PDF's results are a whole folder (HTML, PDF, manifest, image review)
+    pdf_folder = pdf_output_folder(saved_name)
+
+    if os.path.exists(pdf_folder):
+        shutil.rmtree(pdf_folder, ignore_errors=True)
+
+
+def is_pdf(filename):
+    return filename.lower().endswith(".pdf")
+
+
+def pdf_output_folder(saved_name):
+    return os.path.join(PROCESSED_FOLDER, os.path.splitext(saved_name)[0] + "_pdf")
+
+
+# where the finished file is kept, and the name it is downloaded as
+def processed_file_for(submission):
+    saved_stem = os.path.splitext(submission["saved_filename"])[0]
+    original_stem = os.path.splitext(submission["original_filename"])[0]
+
+    if is_pdf(submission["saved_filename"]):
+        return pdf_output_folder(submission["saved_filename"]), saved_stem + ".accessible.pdf", "accessible_" + original_stem + ".pdf"
+
+    # the result is always a .pptx, even when an old .ppt was uploaded
+    return PROCESSED_FOLDER, saved_stem + "_updated.pptx", "accessible_" + original_stem + ".pptx"
+
 
 # changes is a dictionary of column names and their new values
 def update_submission(submission_id, changes):
@@ -312,11 +340,17 @@ def process_one_submission(submission_id, saved_name):
     set_submission_status(submission_id, "processing")
 
     # read from the database so a retry sets the same language as the first attempt
-    language = get_submission(submission_id)["language"]
+    submission = get_submission(submission_id)
+    language = submission["language"]
 
-    was_successful, error_message, error_steps = process_one_file(
-        saved_name, UPLOAD_FOLDER, PROCESSED_FOLDER, update_progress, language
-    )
+    if is_pdf(saved_name):
+        was_successful, error_message, error_steps = process_one_pdf(
+            saved_name, submission["original_filename"], update_progress, language
+        )
+    else:
+        was_successful, error_message, error_steps = process_one_file(
+            saved_name, UPLOAD_FOLDER, PROCESSED_FOLDER, update_progress, language
+        )
 
     if not was_successful:
         logging.error(f"Submission {submission_id} ({saved_name}) failed processing: {error_message} Steps shown to user: {error_steps}")
@@ -336,6 +370,112 @@ def process_one_submission(submission_id, saved_name):
     })
 
     processing_progress.pop(submission_id, None)
+
+
+# the PDF stages that count towards the progress bar, in the order they finish
+PDF_STAGES = ("inspect", "image-remediation", "semantic-html", "tagged-pdf-export", "verify")
+
+
+# the PDF version of process_one_file: gives back whether it worked, a message and steps to try
+def process_one_pdf(saved_name, original_filename, progress_callback, language=None):
+    # imported here so a server without the PDF packages can still fix PowerPoint files
+    try:
+        from pipeline.cli import run as remediate_pdf
+    except ImportError as e:
+        logging.error(f"{saved_name} not processed: the PDF pipeline could not be loaded. Error: {e}")
+        return False, "PDF support is not installed on this server.", [
+            "Upload a PowerPoint file instead, or ask the accessibility team to install the PDF requirements.",
+        ]
+
+    finished_stages = set()
+
+    def on_stage(name, status, message):
+        logging.info(f"{saved_name}: PDF stage {name} {status}. {message}")
+
+        if status == "complete" and name in PDF_STAGES:
+            finished_stages.add(name)
+            progress_callback(len(finished_stages), len(PDF_STAGES))
+
+    stem = os.path.splitext(saved_name)[0]
+    output_folder = Path(pdf_output_folder(saved_name))
+
+    try:
+        manifest = remediate_pdf(
+            Path(UPLOAD_FOLDER) / saved_name, output_folder, on_stage,
+            fallback_title=os.path.splitext(original_filename)[0], language=language,
+        )
+    except Exception as e:
+        logging.exception(f"PDF remediation of {saved_name} stopped. Error: {e}")
+        return pdf_error_details(output_folder / (stem + ".remediation.json"), e)
+
+    report_path = os.path.join(PROCESSED_FOLDER, stem + "_alt_text")
+
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(pdf_report_text(original_filename, manifest))
+
+    return True, None, None
+
+
+# the pipeline stops on purpose for things a person has to decide, so explain those plainly
+def pdf_error_details(manifest_path, error):
+    image_issues = []
+
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        image_issues = manifest.get("imageRemediation", {}).get("issues", [])
+
+    if image_issues:
+        return False, f"This PDF has images whose descriptions need a person to approve them ({len(image_issues)} issue(s)).", [
+            "Image descriptions are never published without approval, and approving them is not on this website yet.",
+            "Ask the accessibility team to run the PDF command-line tool with an approved image review file.",
+        ]
+
+    if isinstance(error, RuntimeError):
+        # these messages come from the pipeline's own checks and say what stopped it
+        return False, f"We could not rebuild this PDF: {error}", [
+            "If the PDF is signed or password protected, upload an unsigned, unlocked copy.",
+            "Otherwise contact the accessibility team, who can review it by hand.",
+        ]
+
+    return False, "Something went wrong while rebuilding this PDF.", [
+        "Please try again. If it keeps failing, contact the accessibility team.",
+    ]
+
+
+def pdf_report_text(original_filename, manifest):
+    inspection = manifest["inspection"]
+    lines = [
+        f"PDF remediation report for {original_filename}",
+        f"Title: {inspection['title']}",
+        f"Language: {inspection['language'] or 'not set (en assumed)'}",
+        "",
+    ]
+
+    if manifest.get("reviewRequired"):
+        lines.append("A person needs to review this file. It has OCR text or a layout that was inferred.")
+    else:
+        lines.append("The PDF was rebuilt with tags, a title and a language.")
+
+    lines.append("")
+
+    for page in inspection["pages"]:
+        line = f"Page {page['page_number']}: {page['route']}"
+
+        if page["complex_content"]:
+            line += ", contains " + ", ".join(page["complex_content"])
+
+        if page["needs_review"]:
+            line += " (needs review)"
+
+        lines.append(line)
+
+    lines.append("")
+    lines.append("Limits of this rebuild:")
+
+    for limitation in manifest["limitations"]:
+        lines.append("- " + limitation)
+
+    return "\n".join(lines) + "\n"
 
 
 def worker_loop():
@@ -378,8 +518,8 @@ def save_one_upload(uploaded_file, language=None):
     filename = uploaded_file.filename
 
     if not filename.lower().endswith(ALLOWED_EXTENSIONS):
-        logging.warning(f"Upload rejected: {filename} is not a .pptx or .ppt file.")
-        return None, f"{filename}: only .pptx and .ppt files are accepted."
+        logging.warning(f"Upload rejected: {filename} is not a .pptx, .ppt or .pdf file.")
+        return None, f"{filename}: only .pptx, .ppt and .pdf files are accepted."
 
     if file_is_too_big(uploaded_file):
         logging.warning(f"Upload rejected: {filename} is over the {MAX_FILE_SIZE_MB}MB size limit.")
@@ -579,14 +719,9 @@ def download(submission_id):
         flash("That file isn't ready to download. It either failed processing or hasn't finished yet.")
         return redirect(url_for("details", submission_id=submission_id))
 
-    saved_name = matching_submission["saved_filename"]
-    processed_filename = os.path.splitext(saved_name)[0] + "_updated.pptx"
+    processed_folder, processed_filename, download_name = processed_file_for(matching_submission)
 
-    # the result is always a .pptx, even when an old .ppt was uploaded
-    original_stem = os.path.splitext(matching_submission["original_filename"])[0]
-    download_name = "accessible_" + original_stem + ".pptx"
-
-    processed_path = os.path.join(PROCESSED_FOLDER, processed_filename)
+    processed_path = os.path.join(processed_folder, processed_filename)
     if not os.path.exists(processed_path):
         logging.error(f"Download requested for submission {submission_id}, but {processed_path} is missing on disk.")
         flash("We couldn't find the processed file. Please try submitting it again.")
@@ -595,7 +730,7 @@ def download(submission_id):
     logging.info(f"Download of submission {submission_id} as {download_name}.")
 
     return send_from_directory(
-        PROCESSED_FOLDER,
+        processed_folder,
         processed_filename,
         as_attachment=True,
         download_name=download_name

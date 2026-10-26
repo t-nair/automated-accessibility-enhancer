@@ -27,9 +27,12 @@ from pipeline.rebuild_html import build_semantic_html
 def scan_fixture(path: Path, text: bool = True) -> None:
     image = Image.new("RGB", (1275, 1650), "white")
     if text:
-        # Pillow can resolve DejaVu Sans on Windows, macOS, and Linux. Keeping
-        # the fixture portable lets the branch run in CI as well as locally.
-        font = ImageFont.truetype("DejaVuSans.ttf", 36)
+        # DejaVu Sans is on most Linux machines (CI) but not on Windows, where
+        # Pillow's bundled scalable font stands in.
+        try:
+            font = ImageFont.truetype("DejaVuSans.ttf", 36)
+        except OSError:
+            font = ImageFont.load_default(36)
         draw = ImageDraw.Draw(image)
         for index, line in enumerate([
             "University of Washington",
