@@ -87,10 +87,17 @@ def run(
     output_dir: Path,
     on_stage: ProgressCallback | None = None,
     image_decisions: Path | None = None,
+    fallback_title: str | None = None,
+    language: str | None = None,
 ) -> dict[str, object]:
     output_dir.mkdir(parents=True, exist_ok=True)
     _report(on_stage, "inspect", "running", "Inspecting every page and its existing structure.")
     inspection = inspect_pdf(source)
+    # web uploads are saved under an id-prefixed name, so the caller can supply a better title
+    if fallback_title and inspection.title == source.stem:
+        inspection.title = fallback_title
+    if language:
+        inspection.language = language
     _report(on_stage, "inspect", "complete", f"Inspected {len(inspection.pages)} pages.")
     stem = source.stem
     html_path = output_dir / f"{stem}.accessible.html"

@@ -55,7 +55,7 @@
 
         {% if submission.status == "error" %}
             <div class="error-box" role="alert">
-                <h3>We couldn’t process this presentation</h3>
+                <h3>We couldn’t process this file</h3>
                 <p>
                     {% if submission.error_message %}
                         {{ submission.error_message }}
@@ -88,7 +88,11 @@
             </p>
 
             <h3>Accessibility Report</h3>
-            <p>This report lists each shape on your slides and its alt text, so you can see what screen readers will announce.</p>
+            {% if submission.saved_filename.lower().endswith(".pdf") %}
+                <p>This report lists how each page was rebuilt and what still needs a person to check.</p>
+            {% else %}
+                <p>This report lists each shape on your slides and its alt text, so you can see what screen readers will announce.</p>
+            {% endif %}
             <pre class="report-text">{{ report_text }}</pre>
         {% endif %}
 

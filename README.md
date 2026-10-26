@@ -17,7 +17,7 @@ Feedback on the design, architecture, or implementation is very welcome. You can
 What happens to a file after it is uploaded:
 
 1. The file is saved and added to a queue
-2. If it is an older `.ppt`, LibreOffice converts it to `.pptx` first
+2. If it is an older `.ppt`, LibreOffice converts it to `.pptx` first. A `.pdf` goes to the PDF pipeline instead (see "Running the PDF remediation pipeline")
 3. Each slide is checked, and its title shapes are moved to the front of the reading order. A shape counts as a title if it is a real title placeholder, or if its name contains "title" in any capitalisation (subtitles are left alone). Running a file a second time changes nothing
 4. Every picture without usable alt text is described by a vision model, and the description is written into the file. Alt text that is just a filename (`photo.png`) or PowerPoint's own name for the picture (`Picture 3`) counts as missing. Alt text a person wrote is never overwritten
 3. Each slide is checked, and its title is moved to the front of the reading order. A real title placeholder (or a shape named "Title") is used when there is one. Otherwise `title_detection.py` guesses which text box is the title from its size, position and wording (see `title_research/README.md`)
@@ -99,7 +99,8 @@ The results are written to `pptx_output`.
 
 ## Running the PDF remediation pipeline
 
-PDF processing is a separate command-line pathway. It inspects every page and
+PDFs can be uploaded on the web page like any other file, or run from the
+command line. Both use the same `pipeline` package. It inspects every page and
 routes it as digital, scanned, hybrid, or uncertain. It detects likely columns,
 tables, images, and dense graphics. Digital text can be rebuilt semantically,
 including a conservative two-column ordering path. Scanned and hybrid pages use
@@ -108,11 +109,20 @@ local English OCR and are always marked for human review.
 Uncertain pages, signed or encrypted files, and unsupported complex content
 stop for review rather than being silently rewritten.
 
+On the web page, the download is a tagged PDF rebuilt from the original, titled
+with the uploaded file name (unless the PDF already has a title) and set to the
+language chosen on the form. The report lists how each page was handled. PDFs
+with images stop until their descriptions are approved, which only the command
+line can do for now (see `pipeline/README.md`). Exporting the tagged PDF needs
+Chrome, Chromium or Edge on the server; set `PDF_PIPELINE_CHROME` if it is not
+found. OCR (`rapidocr-onnxruntime`) needs Python 3.11 or 3.12.
+
 On Windows:
 
 ```powershell
 ./pipeline/setup.ps1 -Python python
 ./.venv/Scripts/python.exe -m pipeline.cli "input.pdf" --output-dir output/remediation
+```
 
 ---
 
@@ -122,7 +132,7 @@ On Windows:
 python -m pytest tests/ -q
 ```
 
-There are 148 tests. They cover the helper functions (title detection, reading order, placeholder alt text), the whole pipeline running against the sample files in `Error Test PPTX`, processing a whole folder in one run, and every page and route on the website.
+They cover the helper functions (title detection, reading order, placeholder alt text), the whole pipeline running against the sample files in `Error Test PPTX`, processing a whole folder in one run, every page and route on the website, and the PDF pipeline (`test_pdf_*.py`).
 
 The tests replace the image description model with a stand-in, so they finish in about a second instead of several minutes. Most of the time you see when running them is Python loading PyTorch, not the tests themselves. The tests use temporary folders, so running them never touches real uploads or the submissions file.
 
@@ -145,6 +155,7 @@ title_detection.py      finds the title of a slide that has no real title placeh
 title_model.joblib      the small trained model title_detection.py uses
 title_research/         how the title model was chosen: data, experiments, results
 generate_test_pptx.py   makes the sample files used by the tests
+pipeline/               the PDF pipeline: page routing, OCR, image review, tagged PDF export
 
 templates/
     index.html          upload page
@@ -188,7 +199,7 @@ JSON file is left alone.
 ---
 
 ## Possible Improvements
-- **PDF support**, which is the most common format after PowerPoint (for PDFs exported from fixed decks, see [docs/pdf-export.md](docs/pdf-export.md))
+- **Approving PDF image descriptions on the web page**, which today needs the command line (for PDFs exported from fixed decks, see [docs/pdf-export.md](docs/pdf-export.md))
 - **Real accounts**, or university sign-in, instead of the cookie the site uses now
 - **Better descriptions**, either from a larger model or a hosted one
 - **Configurable rules** for heading detection and structure inference
