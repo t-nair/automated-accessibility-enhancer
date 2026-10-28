@@ -176,7 +176,7 @@ data/secret_key.txt     used to sign the visitor cookie
 pipeline.log            what happened, including every failure
 
 pptx_input/             folder the script reads (you create it)
-pptx_output/            folder the script writes fixed files and reports
+pptx_output/             where the script writes fixed files and reports
 ```
 
 The database is made automatically the first time the app runs. If an older
