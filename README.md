@@ -16,14 +16,12 @@ Feedback on the design, architecture, or implementation is very welcome. You can
 
 What happens to a file after it is uploaded:
 
-1. The file is saved and added to a queue
-2. If it is an older `.ppt`, LibreOffice converts it to `.pptx` first. A `.pdf` goes to the PDF pipeline instead (see "Running the PDF remediation pipeline")
-3. Each slide is checked, and its title shapes are moved to the front of the reading order. A shape counts as a title if it is a real title placeholder, or if its name contains "title" in any capitalisation (subtitles are left alone). Running a file a second time changes nothing
-4. Every picture without usable alt text is described by a vision model, and the description is written into the file. Alt text that is just a filename (`photo.png`) or PowerPoint's own name for the picture (`Picture 3`) counts as missing. Alt text a person wrote is never overwritten
-3. Each slide is checked, and its title is moved to the front of the reading order. A real title placeholder (or a shape named "Title") is used when there is one. Otherwise `title_detection.py` guesses which text box is the title from its size, position and wording (see `title_research/README.md`)
-4. Every picture without alt text is described by a vision model, and the description is written into the file
-5. The language is checked. A deck with no default language, an invalid language code or more than one language is listed in the report. If a language was chosen on the upload form, it is then set across the whole deck
-6. An updated `.pptx` and a report are written to the output folder
+1. The file is saved and added to a queue.
+2. If it is an older `.ppt`, LibreOffice converts it to `.pptx` first. A `.pdf` goes to the PDF pipeline instead (see "Running the PDF remediation pipeline").
+3. Each slide is checked, and its title is moved to the front of the reading order. A real title placeholder or a shape named "Title" is used when available. Otherwise, `title_detection.py` guesses which text box is the title from its size, position, and wording (see `title_research/README.md`). A shape whose name contains "title" in any capitalization also counts as a title; subtitles are left alone. Running a file a second time changes nothing.
+4. Every picture without usable alt text is described by a vision model, and the description is written into the file. Alt text that is just a filename (such as `photo.png`) or PowerPoint's default name (such as `Picture 3`) counts as missing. Alt text a person wrote is never overwritten.
+5. The language is checked. A deck with no default language, an invalid language code, or more than one language is listed in the report. If a language was chosen on the upload form, it is then set across the whole deck.
+6. An updated `.pptx` and a report are written to the output folder.
 
 See [docs/wcag-coverage.md](docs/wcag-coverage.md) for which WCAG 2.1 criteria are fixed, reported only, or not covered yet.
 
@@ -178,7 +176,7 @@ data/secret_key.txt     used to sign the visitor cookie
 pipeline.log            what happened, including every failure
 
 pptx_input/             folder the script reads (you create it)
-pptx_output/            where the script writes fixed files and reports
+pptx_output/            folder the script writes fixed files and reports
 ```
 
 The database is made automatically the first time the app runs. If an older
