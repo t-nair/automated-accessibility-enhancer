@@ -226,6 +226,31 @@ def test_the_report_is_not_empty(folders, fake_captions):
         assert "Alt Text:" in f.read()
 
 
+def test_the_score_counts_each_severity():
+    summary = z_reorder.severity_summary(["critical", "serious", "serious", "minor"])
+
+    assert "Accessibility score: 79/100" in summary
+    assert "1 critical, 2 serious, 0 moderate, 1 minor" in summary
+
+
+def test_the_score_never_goes_below_zero():
+    assert "score: 0/100" in z_reorder.severity_summary(["critical"] * 20)
+
+
+def test_the_report_opens_with_counts_by_severity(folders, fake_captions):
+    input_folder, output_folder = folders
+    copy_fixture("issue_missing_alt_text.pptx", input_folder)
+
+    z_reorder.process_one_file("issue_missing_alt_text.pptx", input_folder, output_folder)
+
+    with open(os.path.join(output_folder, "issue_missing_alt_text_alt_text"), encoding="utf-8") as f:
+        report = f.read()
+
+    assert report.startswith("Accessibility score: ")
+    assert "Issues by severity: 1 critical" in report
+    assert "[critical] The image had no real description" in report
+
+
 def test_processing_logs_a_summary_with_the_output_paths(folders, fake_captions, caplog):
     input_folder, output_folder = folders
     copy_fixture("issue_missing_alt_text.pptx", input_folder)
