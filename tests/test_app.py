@@ -508,6 +508,7 @@ def test_a_language_that_is_not_offered_is_rejected(client):
 
 def test_the_saved_language_is_used_when_the_file_is_processed(client, monkeypatch):
     add_submission("lang0001", status="queued", language="de-DE")
+    copy_into("control_no_issues.pptx", os.path.join(app_module.UPLOAD_FOLDER, "lang0001_Lecture.pptx"))
     seen = []
 
     def fake_process(saved_name, upload_folder, processed_folder, update_progress, language=None):
@@ -557,6 +558,7 @@ def test_a_pdf_goes_through_the_pdf_pipeline(client, monkeypatch):
 
     add_submission("pdf00001", status="queued", original_filename="Handout.pdf",
                    saved_filename="pdf00001_Handout.pdf", language="fr-FR")
+    open(os.path.join(app_module.UPLOAD_FOLDER, "pdf00001_Handout.pdf"), "wb").close()
     seen = []
 
     def fake_run(source, output_dir, on_stage, fallback_title=None, language=None):
@@ -581,6 +583,7 @@ def test_a_pdf_waiting_on_image_approval_explains_why(client, monkeypatch):
     import pipeline.cli
 
     add_submission("pdf00002", status="queued", original_filename="Figures.pdf", saved_filename="pdf00002_Figures.pdf")
+    open(os.path.join(app_module.UPLOAD_FOLDER, "pdf00002_Figures.pdf"), "wb").close()
 
     def fake_run(source, output_dir, on_stage, fallback_title=None, language=None):
         output_dir.mkdir(parents=True)

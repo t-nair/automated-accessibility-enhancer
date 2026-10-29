@@ -93,7 +93,7 @@ If you would rather not use the web page, put your files in `pptx_input` and run
 python z_reorder.py
 ```
 
-The results are written to `pptx_output`.
+The results are written to `pptx_output`. Your original files stay in `pptx_input`, untouched. To move each original into `pptx_output` once it is done, add `--move-originals`; a file already in `pptx_output` with the same name is never replaced.
 
 ## Running the PDF remediation pipeline
 
