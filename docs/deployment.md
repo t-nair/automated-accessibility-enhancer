@@ -227,18 +227,18 @@ These are not settled in the code or the repository and need someone to decide:
    `infra/initial-terraform-setup` branches target AWS and Render, but they replace the
    local model with Claude on Amazon Bedrock, which sends course images off the server.
    They are not merged and this guide does not use them. Whoever picks a host needs to
-   confirm it may hold course material and has a GPU (or accept CPU speed).
+   confirm it may hold course material and has a GPU (or accept CPU speed). (#102)
 2. **Domain and certificate.** `accessibility.example.edu` and the certificate paths above
-   are placeholders.
+   are placeholders. (#102)
 3. **Who can use it.** There is no login; anyone who can reach the site can upload. Until
    there is university sign-in, keep it on the campus network or VPN, or put sign-in in
-   front of it at the proxy.
+   front of it at the proxy. Real sign-in is #77; the interim choice is #102.
 4. **Upload limits.** Each file may be 50 MB (`MAX_FILE_SIZE_MB`), but nothing limits how
    many files one upload sends; nginx's `client_max_body_size 205m` above is the only cap.
    Pick a total and enforce it in the app too (#74).
 5. **Keeping files.** Nothing is deleted automatically. Decide how long uploads and results
-   may be kept and whether something should clear them.
+   may be kept and whether something should clear them. (#78)
 6. **Model version.** The captioning model is not pinned to a revision, so a fresh
-   download can get a newer one. Pin it, or keep the `HF_HOME` folder backed up.
+   download can get a newer one. Pin it, or keep the `HF_HOME` folder backed up. (#103)
 7. **More than one file at a time.** Needs a shared queue and progress outside the process
-   and enough GPU memory for several models. Until then, one process.
+   and enough GPU memory for several models. Until then, one process. (#104)
