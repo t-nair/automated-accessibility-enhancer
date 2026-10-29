@@ -760,7 +760,7 @@ def color_to_rgb(color, theme, clr_map):
 
     if lum_mod != 1.0 or lum_off:
         hue, lightness, saturation = colorsys.rgb_to_hls(*rgb)
-        rgb = colorsys.hls_to_rgb(hue, min(1.0, lightness * lum_mod + lum_off), saturation)
+        rgb = colorsys.hls_to_rgb(hue, max(0.0, min(1.0, lightness * lum_mod + lum_off)), saturation)
 
     return rgb
 

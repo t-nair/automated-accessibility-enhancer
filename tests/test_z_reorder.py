@@ -1004,3 +1004,10 @@ def test_low_contrast_is_listed_by_slide_in_the_report(folders, fake_captions):
     assert "Slide 2, Shape: Grey Body - 3.03:1, needs 4.5:1" in report
     assert "Slide 1," not in report
     assert "Contrast not checked" not in report
+
+
+def test_a_negative_lum_off_stops_at_black():
+    color = etree.Element(qn("a:srgbClr"), val="000000")
+    etree.SubElement(color, qn("a:lumOff")).set("val", "-50000")
+
+    assert z_reorder.color_to_rgb(color, None, None) == (0.0, 0.0, 0.0)
