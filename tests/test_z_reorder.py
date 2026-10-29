@@ -264,14 +264,75 @@ def test_processing_logs_a_summary_with_the_output_paths(folders, fake_captions,
     assert "issue_missing_alt_text_updated.pptx" in summary[0]
 
 
-def test_the_original_upload_is_moved_out_of_the_input_folder(folders, fake_captions):
+def read_bytes(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+@pytest.mark.parametrize("filename", ["control_no_issues.pptx", "corrupt_truncated_valid_file.pptx"])
+def test_the_original_is_left_unchanged_whether_processing_works_or_not(filename, folders, fake_captions):
+    input_folder, output_folder = folders
+    copy_fixture(filename, input_folder)
+    original = os.path.join(input_folder, filename)
+    before = read_bytes(original)
+
+    z_reorder.process_one_file(filename, input_folder, output_folder)
+
+    assert read_bytes(original) == before
+    assert not os.path.exists(os.path.join(output_folder, filename))
+
+
+def test_moving_originals_is_opt_in(folders, fake_captions):
     input_folder, output_folder = folders
     copy_fixture("control_no_issues.pptx", input_folder)
 
-    z_reorder.process_one_file("control_no_issues.pptx", input_folder, output_folder)
+    z_reorder.process_one_file("control_no_issues.pptx", input_folder, output_folder, move_originals=True)
 
     assert not os.path.exists(os.path.join(input_folder, "control_no_issues.pptx"))
     assert os.path.exists(os.path.join(output_folder, "control_no_issues.pptx"))
+
+
+def test_moving_an_original_never_replaces_a_file_already_in_the_output_folder(folders, fake_captions):
+    input_folder, output_folder = folders
+    copy_fixture("control_no_issues.pptx", input_folder)
+    already_there = os.path.join(output_folder, "control_no_issues.pptx")
+
+    with open(already_there, "wb") as f:
+        f.write(b"someone else's file")
+
+    was_successful, message, steps = z_reorder.process_one_file(
+        "control_no_issues.pptx", input_folder, output_folder, move_originals=True)
+
+    assert was_successful is False
+    assert read_bytes(already_there) == b"someone else's file"
+    assert os.path.exists(os.path.join(input_folder, "control_no_issues.pptx"))
+
+
+def test_a_move_blocked_by_a_lock_finishes_on_the_next_try(folders, monkeypatch):
+    input_folder, output_folder = folders
+    copy_fixture("control_no_issues.pptx", input_folder)
+    original = os.path.join(input_folder, "control_no_issues.pptx")
+    before = read_bytes(original)
+
+    real_remove = os.remove
+    locked = True
+
+    def remove(path):
+        if locked:
+            raise PermissionError("in use")
+        real_remove(path)
+
+    monkeypatch.setattr(z_reorder.os, "remove", remove)
+    monkeypatch.setattr(z_reorder.time, "sleep", lambda seconds: None)
+
+    assert z_reorder.move_original_to_output(input_folder, output_folder, "control_no_issues.pptx") is not None
+    assert read_bytes(original) == before
+
+    locked = False
+
+    assert z_reorder.move_original_to_output(input_folder, output_folder, "control_no_issues.pptx") is None
+    assert not os.path.exists(original)
+    assert read_bytes(os.path.join(output_folder, "control_no_issues.pptx")) == before
 
 
 def test_a_missing_description_is_written_into_the_updated_file(folders, fake_captions):

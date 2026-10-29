@@ -230,7 +230,7 @@ def generate_image_caption(shape, slide_text=""):
     return caption
 
 
-def accessibility_processor(directory, new_directory):
+def accessibility_processor(directory, new_directory, move_originals=False):
     files = os.listdir(directory)
     pptx_files = []
 
@@ -247,7 +247,7 @@ def accessibility_processor(directory, new_directory):
     failed = []
 
     for filename in pptx_files:
-        was_successful, message, _ = process_one_file(filename, directory, new_directory)
+        was_successful, message, _ = process_one_file(filename, directory, new_directory, move_originals=move_originals)
 
         if not was_successful:
             logging.error(f"{filename} failed: {message}")
@@ -386,10 +386,24 @@ def move_original_to_output(directory, new_directory, filename):
     original_upload_path = os.path.join(directory, filename)
     moved_original_path = os.path.join(new_directory, filename)
     move_error = None
+    linked = False
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            os.rename(original_upload_path, moved_original_path)
+            # link then remove: os.link refuses an existing file in one step, while
+            # os.rename would silently replace it on Linux and macOS
+            if not linked:
+                try:
+                    os.link(original_upload_path, moved_original_path)
+                except FileExistsError:
+                    # an earlier attempt that could not remove the original leaves its
+                    # link behind, which is the same file, so carry on from there
+                    if not os.path.samefile(original_upload_path, moved_original_path):
+                        raise
+
+                linked = True
+
+            os.remove(original_upload_path)
             return None
         except PermissionError as e:
             move_error = e
@@ -401,7 +415,8 @@ def move_original_to_output(directory, new_directory, filename):
     return move_error
 
 
-def process_one_file(filename, directory, new_directory, progress_callback=None, language=None):
+# the original is left where it is unless move_originals is set
+def process_one_file(filename, directory, new_directory, progress_callback=None, language=None, move_originals=False):
     # language is optional. When given, it is set across the whole deck, e.g. "en-US".
     if language is not None and not is_language_tag(language):
         logging.error(f"{filename} not processed: {language!r} is not a language code.")
@@ -475,7 +490,7 @@ def process_one_file(filename, directory, new_directory, progress_callback=None,
         except OSError as e:
             logging.warning(f"Could not tidy up the converted copy of {filename}. Error: {e}")
 
-    move_error = move_original_to_output(directory, new_directory, filename)
+    move_error = move_original_to_output(directory, new_directory, filename) if move_originals else None
 
     if move_error is not None:
         logging.error(f"Could not move original file {filename} to output folder. Error: {move_error}")
@@ -1268,6 +1283,12 @@ def write_alt_text_line(shape, f, slide_text=""):
 
 
 if __name__ == "__main__":
-    directory_path = "pptx_input"
-    new_directory = "pptx_output"
-    accessibility_processor(directory_path, new_directory)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Fix every .pptx in a folder. The originals are left where they are.")
+    parser.add_argument("input_folder", nargs="?", default="pptx_input")
+    parser.add_argument("output_folder", nargs="?", default="pptx_output")
+    parser.add_argument("--move-originals", action="store_true",
+                        help="also move each original into the output folder once it is done (never replaces an existing file)")
+    args = parser.parse_args()
+    accessibility_processor(args.input_folder, args.output_folder, move_originals=args.move_originals)

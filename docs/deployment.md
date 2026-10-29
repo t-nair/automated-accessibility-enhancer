@@ -206,16 +206,10 @@ returned, and the page polls for progress.
 sudo systemctl restart accessibility-enhancer
 ```
 
-Wait until no file shows "queued" or "processing" before restarting. The queue is only in
-memory, so files waiting or in progress at restart stay stuck in that state, and the page
-does not let anyone retry or delete them. To clear them after a restart, set them to error
-so they can be retried from the page:
-
-```bash
-sqlite3 data/submissions.db "UPDATE submissions SET status = 'error', error_message = 'The server restarted while this file was waiting. Please retry.' WHERE status IN ('queued', 'processing');"
-```
-
-Putting them back on the queue automatically is tracked in #76.
+The queue is only in memory, so on start the app puts every file still shown as "queued" or
+"processing" back on the queue. A file in progress starts again from its original upload,
+which is never moved or changed. If that original is gone, the file is marked as an error
+that asks the person to upload it again.
 
 ---
 

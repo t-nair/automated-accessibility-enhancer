@@ -222,6 +222,20 @@ def pdf_output_folder(saved_name):
     return os.path.join(PROCESSED_FOLDER, os.path.splitext(saved_name)[0] + "_pdf")
 
 
+# the folder holding the original upload, or None if it is gone. Older versions moved
+# it into the processed folder once it was done, so look there too.
+def original_upload_folder(saved_name):
+    for folder in (UPLOAD_FOLDER, PROCESSED_FOLDER):
+        if os.path.exists(os.path.join(folder, saved_name)):
+            return folder
+
+    return None
+
+
+ORIGINAL_GONE_MESSAGE = "The original upload is no longer available for retry."
+ORIGINAL_GONE_STEPS = ["Go back to the submit page and upload the presentation again."]
+
+
 # where the finished file is kept, and the name it is downloaded as
 def processed_file_for(submission):
     saved_stem = os.path.splitext(submission["saved_filename"])[0]
@@ -311,14 +325,17 @@ def process_one_submission(submission_id, saved_name):
     # read from the database so a retry sets the same language as the first attempt
     submission = get_submission(submission_id)
     language = submission["language"]
+    input_folder = original_upload_folder(saved_name)
 
-    if is_pdf(saved_name):
+    if input_folder is None:
+        was_successful, error_message, error_steps = False, ORIGINAL_GONE_MESSAGE, ORIGINAL_GONE_STEPS
+    elif is_pdf(saved_name):
         was_successful, error_message, error_steps = process_one_pdf(
-            saved_name, submission["original_filename"], update_progress, language
+            saved_name, input_folder, submission["original_filename"], update_progress, language
         )
     else:
         was_successful, error_message, error_steps = process_one_file(
-            saved_name, UPLOAD_FOLDER, PROCESSED_FOLDER, update_progress, language
+            saved_name, input_folder, PROCESSED_FOLDER, update_progress, language
         )
 
     if not was_successful:
@@ -346,7 +363,7 @@ PDF_STAGES = ("inspect", "image-remediation", "semantic-html", "tagged-pdf-expor
 
 
 # the PDF version of process_one_file: gives back whether it worked, a message and steps to try
-def process_one_pdf(saved_name, original_filename, progress_callback, language=None):
+def process_one_pdf(saved_name, input_folder, original_filename, progress_callback, language=None):
     # imported here so a server without the PDF packages can still fix PowerPoint files
     try:
         from pipeline.cli import run as remediate_pdf
@@ -370,7 +387,7 @@ def process_one_pdf(saved_name, original_filename, progress_callback, language=N
 
     try:
         manifest = remediate_pdf(
-            Path(UPLOAD_FOLDER) / saved_name, output_folder, on_stage,
+            Path(input_folder) / saved_name, output_folder, on_stage,
             fallback_title=os.path.splitext(original_filename)[0], language=language,
         )
     except Exception as e:
@@ -485,6 +502,30 @@ worker_thread.start()
 
 def start_processing(submission_id, saved_name):
     work_queue.put((submission_id, saved_name))
+
+
+# the queue only lives in memory, so anything waiting or half done when the app
+# stopped is queued again, or marked as an error if its original is gone
+def recover_unfinished_submissions():
+    connection = get_connection()
+    rows = connection.execute(
+        "SELECT id, saved_filename FROM submissions WHERE status IN ('queued', 'processing') ORDER BY rowid"
+    ).fetchall()
+    connection.close()
+
+    for row in rows:
+        if original_upload_folder(row["saved_filename"]) is None:
+            logging.error(f"Submission {row['id']} could not be resumed after a restart: {row['saved_filename']} is gone.")
+            update_submission(row["id"], {
+                "status": "error",
+                "error_message": ORIGINAL_GONE_MESSAGE,
+                "error_steps": ORIGINAL_GONE_STEPS,
+            })
+            continue
+
+        logging.info(f"Submission {row['id']} was unfinished when the app stopped, so it is queued again.")
+        set_submission_status(row["id"], "queued")
+        start_processing(row["id"], row["saved_filename"])
 
 
 # every form carries this token, so another site can't make a visitor's browser
@@ -672,11 +713,11 @@ def retry_submission(submission_id):
         return redirect(url_for("details", submission_id=submission_id))
 
     filename = submission["saved_filename"]
-    if not os.path.exists(os.path.join(UPLOAD_FOLDER, filename)):
+    if original_upload_folder(filename) is None:
         logging.error(f"Retry of submission {submission_id} impossible: {filename} is gone from {UPLOAD_FOLDER}.")
         update_submission(submission_id, {
-            "error_message": "The original upload is no longer available for retry.",
-            "error_steps": ["Go back to the submit page and upload the presentation again."],
+            "error_message": ORIGINAL_GONE_MESSAGE,
+            "error_steps": ORIGINAL_GONE_STEPS,
         })
         flash("We need the original upload to retry. Please submit the presentation again.")
         return redirect(url_for("details", submission_id=submission_id))
@@ -746,6 +787,8 @@ def download(submission_id):
 
 if __name__ == "__main__":
     from waitress import serve
+
+    recover_unfinished_submissions()
 
     # one process with threads, never several processes: the queue, the progress and the
     # captioning model all live in this process (see docs/deployment.md)
