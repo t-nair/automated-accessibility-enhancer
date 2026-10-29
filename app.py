@@ -19,7 +19,6 @@ UPLOAD_FOLDER = "uploads"
 PROCESSED_FOLDER = "processed"
 DATA_FOLDER = "data"
 DATABASE_FILE = "data/submissions.db"
-OLD_SUBMISSIONS_FILE = "data/submissions.json"
 SECRET_KEY_FILE = "data/secret_key.txt"
 ALLOWED_EXTENSIONS = (".pptx", ".ppt", ".pdf")
 MAX_FILE_SIZE_MB = 50
@@ -256,41 +255,7 @@ def update_submission(submission_id, changes):
     connection.close()
 
 
-# the project used to keep submissions in a JSON file, so bring those across once
-def import_old_submissions():
-    if not os.path.exists(OLD_SUBMISSIONS_FILE):
-        return
-
-    connection = get_connection()
-    already_there = connection.execute("SELECT COUNT(*) FROM submissions").fetchone()[0]
-    connection.close()
-
-    if already_there > 0:
-        return
-
-    with open(OLD_SUBMISSIONS_FILE, "r") as f:
-        old_submissions = json.load(f)
-
-    for old in old_submissions:
-        add_submission({
-            "id": old["id"],
-            # these were submitted before there were separate visitors
-            "owner_id": None,
-            "original_filename": old.get("original_filename", ""),
-            "saved_filename": old.get("saved_filename", ""),
-            "status": old.get("status", "error"),
-            "alt_text_filename": old.get("alt_text_filename"),
-            "error_message": old.get("error_message"),
-            "error_steps": old.get("error_steps"),
-            "retry_count": old.get("retry_count", 0),
-            "submitted_at": old.get("submitted_at", ""),
-        })
-
-    logging.info(f"Copied {len(old_submissions)} older submission(s) from {OLD_SUBMISSIONS_FILE} into the database.")
-
-
 setup_database()
-import_old_submissions()
 
 
 # each browser gets a random id in a cookie, which is how one person's list of files

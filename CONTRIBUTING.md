@@ -34,13 +34,13 @@ source .venv/bin/activate          # Windows: .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-Then run it against a directory of decks:
+Then put decks in `pptx_input/` and run:
 
 ```bash
-python z_reorder.py INPUT_DIR OUTPUT_DIR
+python z_reorder.py
 ```
 
-See [SETUP.md](SETUP.md) for a detailed walkthrough.
+See the [README](README.md) for the web page, the PDF pipeline and the tests.
 
 ---
 

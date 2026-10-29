@@ -9,7 +9,7 @@ This is a research note for [#37](https://github.com/t-nair/automated-accessibil
 | Option | Result | Usable here? |
 |---|---|---|
 | [Download PPTX](https://support.prezi.com/hc/en-us/articles/36014448143767-How-do-I-download-my-Prezi-presentation-as-PowerPoint-slides) | One slide per frame, opens in PowerPoint. Zoom and pan transitions are not kept. | Yes. This is the path. |
-| Download PDF | One static page per frame. Dynamic content is lost. | Not yet. PDF remediation has no issue (see `PLAN.md`). |
+| Download PDF | One static page per frame. Dynamic content is lost. | Yes, through the PDF pipeline (`pipeline/`). |
 | [Portable presentation](https://support.prezi.com/hc/en-us/articles/360003478454-Presenting-and-viewing-a-downloaded-presentation-portable-presentation) (EXE or ZIP) | Offline player, not editable. Needs a Plus plan or higher. | No. Nothing to remediate. |
 
 ## Accessibility of Prezi itself
