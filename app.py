@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, jsonify, session
 from werkzeug.utils import secure_filename
-from z_reorder import process_one_file
+from z_reorder import process_one_file, severity_summary
 
 app = Flask(__name__)
 
@@ -38,6 +38,9 @@ LANGUAGES = {
 }
 
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
+# FLASK_-prefixed environment variables set Flask settings, e.g. FLASK_SESSION_COOKIE_SECURE=true behind HTTPS
+app.config.from_prefixed_env()
 
 # these folders are not stored in git, so make sure they exist on a fresh copy
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -427,10 +430,20 @@ def pdf_error_details(manifest_path, error):
 
 def pdf_report_text(original_filename, manifest):
     inspection = manifest["inspection"]
+    pages_to_review = [page for page in inspection["pages"] if page["needs_review"]]
+
+    # a missing language is serious (WCAG 3.1.1), a page a person must check is moderate
+    issues = ["moderate"] * len(pages_to_review)
+    language = inspection["language"]
+
+    if not language:
+        issues.append("serious")
+
     lines = [
+        severity_summary(issues),
         f"PDF remediation report for {original_filename}",
         f"Title: {inspection['title']}",
-        f"Language: {inspection['language'] or 'not set (en assumed)'}",
+        f"Language: {language or '[serious] not set (en assumed)'}",
         "",
     ]
 
@@ -448,7 +461,7 @@ def pdf_report_text(original_filename, manifest):
             line += ", contains " + ", ".join(page["complex_content"])
 
         if page["needs_review"]:
-            line += " (needs review)"
+            line += " [moderate] (needs review)"
 
         lines.append(line)
 
@@ -773,6 +786,10 @@ def download(submission_id):
 
 
 if __name__ == "__main__":
+    from waitress import serve
+
     recover_unfinished_submissions()
-    port = int(os.environ.get("PORT", 5000))
-    app.run(debug=True, port=port)
+
+    # one process with threads, never several processes: the queue, the progress and the
+    # captioning model all live in this process (see docs/deployment.md)
+    serve(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5000)))

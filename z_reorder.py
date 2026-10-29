@@ -4,10 +4,13 @@ import re
 import time
 import shutil
 import logging
+import colorsys
 import subprocess
 import torch
+from lxml import etree
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml.ns import qn
 from pptx.oxml.xmlchemy import OxmlElement
 from PIL import Image
@@ -61,6 +64,17 @@ LANGUAGE_TAG = re.compile(r"^[a-z]{2,3}(-[a-z0-9]{2,8})*$", re.IGNORECASE)
 # WCAG sets no minimum point size, but text this small fails 1.4.4 (Resize Text) in
 # practice and cannot be read when projected. Set MIN_FONT_PT to use a different cutoff.
 MIN_FONT_PT = float(os.environ.get("MIN_FONT_PT", "9"))
+
+# WCAG 1.4.3: 4.5:1 for normal text, 3:1 for large text (18 pt, or 14 pt bold)
+MIN_CONTRAST = 4.5
+MIN_CONTRAST_LARGE = 3.0
+LARGE_PT = 18
+LARGE_BOLD_PT = 14
+
+# what a fill turns out to be when it isn't one solid colour
+CLEAR = "clear"
+UNKNOWN = "unknown"
+WHITE = (1.0, 1.0, 1.0)
 
 CAPTION_MODEL_NAME = "Qwen/Qwen2-VL-2B-Instruct"
 
@@ -444,9 +458,14 @@ def process_one_file(filename, directory, new_directory, progress_callback=None,
     alt_text_output_file = os.path.join(new_directory, os.path.splitext(filename)[0] + "_alt_text")
 
     try:
+        # the details go to memory first, so the score can be written above them
+        details = io.StringIO()
+        counts = fix_titles_and_log_alt_text(prs, details, filename, progress_callback)
+        issues = counts["issues"] + report_and_set_language(prs, details, filename, language)
+
         with open(alt_text_output_file, "w", encoding="utf-8") as f:
-            counts = fix_titles_and_log_alt_text(prs, f, filename, progress_callback)
-            report_and_set_language(prs, f, filename, language)
+            f.write(severity_summary(issues))
+            f.write(details.getvalue())
     except Exception as e:
         logging.exception(f"Something went wrong processing shapes in {filename}. Error: {e}")
         return False, "We opened your file, but something went wrong while checking your slides for accessibility issues.", [
@@ -481,7 +500,8 @@ def process_one_file(filename, directory, new_directory, progress_callback=None,
 
     logging.info(
         f"Summary: {filename} | {counts['slides']} slide(s), {counts['titles_moved']} title(s) moved, "
-        f"{counts['captioned']} image(s) captioned, {counts['small_text']} shape(s) with small text | report: {alt_text_output_file} | "
+        f"{counts['captioned']} image(s) captioned, {counts['small_text']} shape(s) with small text, "
+        f"{counts['low_contrast']} shape(s) with low contrast | report: {alt_text_output_file} | "
         f"updated deck: {new_filepath} | {time.perf_counter() - started_at:.2f}s")
     return True, None, None
 
@@ -714,6 +734,265 @@ def find_small_text(slide, min_pt=MIN_FONT_PT):
     return found
 
 
+def get_theme(slide):
+    """The master's theme and colour map, which scheme colours like tx1 and accent1 resolve through."""
+    master = slide.slide_layout.slide_master
+    theme = etree.fromstring(master.part.part_related_by(RT.THEME).blob)
+
+    return theme, master._element.find(qn("p:clrMap"))
+
+
+def scheme_rgb(name, theme, clr_map):
+    # ponytail: ignores a clrMapOvr on the slide or layout, which few decks use
+    name = clr_map.get(name, name) if clr_map is not None else name
+    slot = theme.find(".//" + qn("a:clrScheme") + "/" + qn("a:" + name))
+
+    return color_to_rgb(slot[0], theme, clr_map) if slot is not None and len(slot) else None
+
+
+def color_to_rgb(color, theme, clr_map):
+    """(r, g, b) from 0 to 1 for a colour element, or None if it can't be worked out."""
+    tag = etree.QName(color).localname
+
+    if tag == "schemeClr":
+        rgb = scheme_rgb(color.get("val"), theme, clr_map)
+    elif tag in ("srgbClr", "sysClr"):
+        hex_value = color.get("val") if tag == "srgbClr" else color.get("lastClr")
+        rgb = tuple(int(hex_value[i:i + 2], 16) / 255 for i in (0, 2, 4)) if hex_value else None
+    else:
+        return None
+
+    if rgb is None:
+        return None
+
+    lum_mod, lum_off = 1.0, 0.0
+
+    for modifier in color:
+        name = etree.QName(modifier).localname
+
+        if name == "lumMod":
+            lum_mod = int(modifier.get("val")) / 100000
+        elif name == "lumOff":
+            lum_off = int(modifier.get("val")) / 100000
+        else:
+            # ponytail: tint, shade, alpha and the rest are not applied, so the colour is unknown
+            return None
+
+    if lum_mod != 1.0 or lum_off:
+        hue, lightness, saturation = colorsys.rgb_to_hls(*rgb)
+        rgb = colorsys.hls_to_rgb(hue, max(0.0, min(1.0, lightness * lum_mod + lum_off)), saturation)
+
+    return rgb
+
+
+def get_fill(props, theme, clr_map):
+    """The fill set directly on props: an RGB tuple, CLEAR for no fill, UNKNOWN for a fill
+    that isn't one solid colour, or None if props sets no fill at all."""
+    if props is None:
+        return None
+
+    for child in props:
+        name = etree.QName(child).localname
+
+        if name == "solidFill":
+            return (color_to_rgb(child[0], theme, clr_map) if len(child) else None) or UNKNOWN
+        if name == "noFill":
+            return CLEAR
+        if name in ("gradFill", "blipFill", "pattFill", "grpFill"):
+            return UNKNOWN
+
+    return None
+
+
+def get_style_ref_fill(ref, theme, clr_map):
+    """Fill for a fillRef or bgRef, which point into the theme's fill styles by index."""
+    index = int(ref.get("idx", "0"))
+
+    if index == 0:
+        return CLEAR
+
+    style_list = theme.find(".//" + qn("a:bgFillStyleLst" if index >= 1001 else "a:fillStyleLst"))
+    styles = list(style_list) if style_list is not None else []
+    position = index - 1001 if index >= 1001 else index - 1
+
+    if position >= len(styles):
+        return UNKNOWN
+
+    style = styles[position]
+
+    if etree.QName(style).localname != "solidFill" or not len(style) or not len(ref):
+        return get_fill([style], theme, clr_map) or UNKNOWN
+
+    # the style's phClr stands for the colour given on the reference itself
+    color = ref[0] if style[0].get("val") == "phClr" and not len(style[0]) else style[0]
+
+    return color_to_rgb(color, theme, clr_map) or UNKNOWN
+
+
+def get_shape_fill(element, theme, clr_map):
+    if element.tag == qn("p:pic"):
+        return UNKNOWN
+
+    fill = get_fill(element.find(qn("p:spPr")), theme, clr_map)
+
+    if fill is None:
+        ref = element.find(qn("p:style") + "/" + qn("a:fillRef"))
+        fill = get_style_ref_fill(ref, theme, clr_map) if ref is not None else CLEAR
+
+    return fill
+
+
+def get_slide_background(slide, theme, clr_map):
+    for source in (slide, slide.slide_layout, slide.slide_layout.slide_master):
+        background = source._element.find(qn("p:cSld") + "/" + qn("p:bg"))
+
+        if background is None:
+            continue
+
+        background_props = background.find(qn("p:bgPr"))
+
+        if background_props is not None:
+            fill = get_fill(background_props, theme, clr_map)
+            return WHITE if fill == CLEAR else fill or UNKNOWN
+
+        ref = background.find(qn("p:bgRef"))
+
+        if ref is not None:
+            return get_style_ref_fill(ref, theme, clr_map)
+
+    return WHITE
+
+
+def covers(behind, shape):
+    edges = (behind.left, behind.top, behind.width, behind.height, shape.left, shape.top, shape.width, shape.height)
+
+    return None not in edges and (
+        behind.left <= shape.left and behind.top <= shape.top
+        and behind.left + behind.width >= shape.left + shape.width
+        and behind.top + behind.height >= shape.top + shape.height)
+
+
+def get_background(slide, shape, text_frame, theme, clr_map):
+    """Colour behind the text: the shape's own fill, else a filled shape under it, else the slide."""
+    if shape.has_table:
+        # ponytail: table styles are not read, so only cells with their own solid fill are checked
+        fill = get_fill(text_frame._txBody.getparent().find(qn("a:tcPr")), theme, clr_map)
+        return fill if fill not in (None, CLEAR) else UNKNOWN
+
+    fill = get_shape_fill(shape._element, theme, clr_map)
+
+    if fill != CLEAR:
+        return fill
+
+    # ponytail: only looks under top-level shapes, and only at shapes that fully cover it
+    shapes = list(slide.shapes)
+
+    if shape in shapes:
+        for behind in reversed(shapes[:shapes.index(shape)]):
+            if covers(behind, shape):
+                fill = get_shape_fill(behind._element, theme, clr_map)
+
+                if fill != CLEAR:
+                    return fill
+
+    return get_slide_background(slide, theme, clr_map)
+
+
+def get_level_defaults(chain, level):
+    """The defRPr for this paragraph level from each style in the chain, nearest first."""
+    return [style.find(qn(f"a:lvl{level + 1}pPr") + "/" + qn("a:defRPr")) if style is not None else None
+            for style in chain]
+
+
+def get_run_color(run, defaults, shape, theme, clr_map):
+    """Text colour as an RGB tuple, CLEAR for hidden text, or UNKNOWN."""
+    font_ref = shape._element.find(qn("p:style") + "/" + qn("a:fontRef"))
+
+    # the shape style's font colour beats the layout and master, but not the shape's own list style
+    for props in [run._r.find(qn("a:rPr")), defaults[0], font_ref] + defaults[1:]:
+        if props is not None and props is font_ref:
+            return (color_to_rgb(font_ref[0], theme, clr_map) if len(font_ref) else None) or UNKNOWN
+
+        fill = get_fill(props, theme, clr_map)
+
+        if fill is not None:
+            return fill
+
+    return scheme_rgb("tx1", theme, clr_map) or UNKNOWN
+
+
+def is_bold(run, defaults):
+    if run.font.bold is not None:
+        return run.font.bold
+
+    return next((d.get("b") in ("1", "true") for d in defaults if d is not None and d.get("b") is not None), False)
+
+
+def luminance(rgb):
+    channels = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def contrast_ratio(first, second):
+    lighter, darker = sorted((luminance(first) + 0.05, luminance(second) + 0.05), reverse=True)
+
+    return lighter / darker
+
+
+def find_low_contrast(slide):
+    """Return (shape name, worst ratio, ratio needed, text) for each shape with text below WCAG 1.4.3.
+
+    The ratios are None when the shape could not be checked, because the background or
+    text colour is a gradient, picture, table style or a colour effect that isn't read.
+    """
+    found = []
+    theme, clr_map = get_theme(slide)
+
+    for shape, text_frame in get_text_frames(slide.shapes):
+        if not text_frame.text.strip():
+            continue
+
+        chain = get_style_chain(slide, shape, text_frame)
+        fit = text_frame._txBody.find(qn("a:bodyPr") + "/" + qn("a:normAutofit"))
+        scale = int(fit.get("fontScale")) / 100000 if fit is not None and fit.get("fontScale") else 1.0
+        background = get_background(slide, shape, text_frame, theme, clr_map)
+        unchecked = background == UNKNOWN
+        failures = []
+
+        for paragraph in text_frame.paragraphs:
+            defaults = get_level_defaults(chain, paragraph.level)
+
+            for run in paragraph.runs:
+                if unchecked or not run.text.strip():
+                    continue
+
+                color = get_run_color(run, defaults, shape, theme, clr_map)
+
+                if color == UNKNOWN:
+                    unchecked = True
+                    continue
+
+                if color == CLEAR:
+                    continue
+
+                pt = get_run_pt(run, paragraph.level, chain, scale)
+                large = pt >= LARGE_PT or (pt >= LARGE_BOLD_PT and is_bold(run, defaults))
+                needed = MIN_CONTRAST_LARGE if large else MIN_CONTRAST
+                ratio = contrast_ratio(color, background)
+
+                if ratio < needed:
+                    failures.append((ratio, needed, run.text.strip()))
+
+        if failures:
+            ratio, needed, _ = min(failures)
+            found.append((shape.name, ratio, needed, " ".join(text for _, _, text in failures)))
+        elif unchecked:
+            found.append((shape.name, None, None, text_frame.text.strip()))
+
+    return found
+
+
 def find_language_problems(prs):
     """List what is wrong with the deck's language, as short sentences for the report.
 
@@ -803,16 +1082,44 @@ def set_language(prs, language):
     run_defaults.set("lang", language)
 
 
+# every problem a check finds gets one of these, worst first, so people know what to fix first
+SEVERITIES = ("critical", "serious", "moderate", "minor")
+
+# ponytail: flat points off per problem, so a long deck scores lower than a short one with
+# the same habits. Scale by slide count if people find that unfair.
+SEVERITY_POINTS = {"critical": 10, "serious": 5, "moderate": 2, "minor": 1}
+
+
+def severity_summary(issues):
+    """The report's opening lines: a score out of 100 and how many problems of each severity.
+
+    issues has one severity per problem found in the file as it was uploaded, including
+    the ones that were fixed, so the score says how accessible the original was.
+    """
+    counts = {severity: issues.count(severity) for severity in SEVERITIES}
+    score = max(0, 100 - sum(SEVERITY_POINTS[severity] * n for severity, n in counts.items()))
+    by_severity = ", ".join(f"{n} {severity}" for severity, n in counts.items())
+
+    return f"Accessibility score: {score}/100 (as uploaded)\nIssues by severity: {by_severity}\n"
+
+
 def report_and_set_language(prs, f, filename, language=None):
     # what was found is written first, so the report describes the deck as it was uploaded
+    issues = []
+
     for problem in find_language_problems(prs):
+        # two languages may be intended, a missing or broken code never is
+        severity = "minor" if problem.startswith("more than one language") else "serious"
+        issues.append(severity)
         logging.warning(f"{filename}: language: {problem}")
-        f.write(f" \n Language (WCAG 3.1.1, 3.1.2): {problem} \n")
+        f.write(f" \n [{severity}] Language (WCAG 3.1.1, 3.1.2): {problem} \n")
 
     if language:
         set_language(prs, language)
         logging.info(f"{filename}: language set to {language}.")
         f.write(f" \n Language set to {language} across the whole presentation. \n")
+
+    return issues
 
 
 def count_images_needing_captions(prs):
@@ -836,7 +1143,11 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         progress_callback(captions_done, total_to_caption)
 
     untitled_slides = []
+    reordered_slides = []
     small_text_lines = []
+    low_contrast_lines = []
+    unchecked_contrast_lines = []
+    issues = []
 
     for slide_number, slide in enumerate(prs.slides, start=1):
 
@@ -847,6 +1158,13 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
         for name, pt, text in find_small_text(slide):
             small_text_lines.append(f"Slide {slide_number}, Shape: {name} - {pt:g} pt: {text[:60]!r}")
+
+        for name, ratio, needed, text in find_low_contrast(slide):
+            if ratio is None:
+                unchecked_contrast_lines.append(f"Slide {slide_number}, Shape: {name}: {text[:60]!r}")
+            else:
+                low_contrast_lines.append(
+                    f"Slide {slide_number}, Shape: {name} - {ratio:.2f}:1, needs {needed:g}:1: {text[:60]!r}")
 
         if len(slide.shapes) == 0:
             logging.warning(f"{filename}: slide {slide_number} has no shapes, skipping title fix.")
@@ -859,6 +1177,7 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         titles_moved += moved
 
         if moved:
+            reordered_slides.append(slide_number)
             logging.info(f"{filename}: slide {slide_number} moved {moved} title shape(s) to the front.")
 
         # read the shapes back after reordering, so the report lists them in the
@@ -866,7 +1185,10 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         for shape in list(slide.shapes):
             needed_caption = needs_caption(shape)
 
-            write_alt_text_line(shape, f, slide_text)
+            severity = write_alt_text_line(shape, f, slide_text)
+
+            if severity:
+                issues.append(severity)
 
             if needed_caption:
                 captions_done += 1
@@ -874,24 +1196,47 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
                 if progress_callback is not None:
                     progress_callback(captions_done, total_to_caption)
 
+    # already fixed, but listed so the score matches what was found
+    if reordered_slides:
+        issues += ["moderate"] * len(reordered_slides)
+        slide_list = ", ".join(str(n) for n in reordered_slides)
+        f.write(f" \n [moderate] Title was not read first, now fixed (WCAG 1.3.2): slides {slide_list} \n")
+
     # report only: a generated title would be a guess, so a person adds the real one
     if untitled_slides:
+        issues += ["serious"] * len(untitled_slides)
         slide_list = ", ".join(str(n) for n in untitled_slides)
         logging.warning(f"{filename}: slides with no title: {slide_list}")
-        f.write(f" \n Slides with no title (WCAG 2.4.2): {slide_list} \n")
+        f.write(f" \n [serious] Slides with no title (WCAG 2.4.2): {slide_list} \n")
 
     # report only: raising sizes can break the layout, so a person decides
     if small_text_lines:
+        issues += ["minor"] * len(small_text_lines)
         logging.warning(f"{filename}: {len(small_text_lines)} shape(s) with text below {MIN_FONT_PT:g} pt.")
-        f.write(f" \n Text below {MIN_FONT_PT:g} pt (WCAG 1.4.4): \n")
+        f.write(f" \n [minor] Text below {MIN_FONT_PT:g} pt (WCAG 1.4.4): \n")
 
         for line in small_text_lines:
+            f.write(f" - {line} \n")
+
+    # report only: a replacement colour is a design choice, so a person picks it
+    if low_contrast_lines:
+        issues += ["serious"] * len(low_contrast_lines)
+        logging.warning(f"{filename}: {len(low_contrast_lines)} shape(s) with low contrast text.")
+        f.write(" \n [serious] Text with too little contrast (WCAG 1.4.3): \n")
+
+        for line in low_contrast_lines:
+            f.write(f" - {line} \n")
+
+    if unchecked_contrast_lines:
+        f.write(" \n Contrast not checked, the background or text is not one solid colour (WCAG 1.4.3): \n")
+
+        for line in unchecked_contrast_lines:
             f.write(f" - {line} \n")
 
     logging.info(f"{filename}: alt text pass done, {captions_done}/{total_to_caption} image(s) captioned.")
 
     return {"slides": len(prs.slides), "titles_moved": titles_moved, "captioned": captions_done,
-            "small_text": len(small_text_lines)}
+            "small_text": len(small_text_lines), "low_contrast": len(low_contrast_lines), "issues": issues}
 
 
 def get_picture_alt_text(shape):
@@ -904,6 +1249,7 @@ def set_picture_alt_text(shape, alt_text):
     shape._element.nvPicPr.cNvPr.set("descr", alt_text)
 
 
+# gives back the severity of the problem it found and fixed, or None if there was none
 def write_alt_text_line(shape, f, slide_text=""):
     if is_picture(shape):
         existing_alt_text = get_picture_alt_text(shape)
@@ -911,6 +1257,9 @@ def write_alt_text_line(shape, f, slide_text=""):
         if existing_alt_text and not is_placeholder_alt_text(existing_alt_text, shape.name):
             f.write(f" \n Shape: {shape.name} \n - Alt Text: {existing_alt_text} \n")
         else:
+            # no description at all hides the image, a filename at least says it is there
+            severity = "serious" if existing_alt_text else "critical"
+
             if existing_alt_text:
                 logging.info(
                     f"{shape.name}: replacing filename-style alt text "
@@ -923,7 +1272,9 @@ def write_alt_text_line(shape, f, slide_text=""):
                 logging.exception(f"Could not generate a caption for {shape.name}. Falling back to the placeholder {alt_text!r}. Error: {e}")
 
             set_picture_alt_text(shape, alt_text)
-            f.write(f" \n Shape: {shape.name} \n - Alt Text: {alt_text} \n")
+            f.write(f" \n Shape: {shape.name} \n - Alt Text: {alt_text} \n"
+                    f" - [{severity}] The image had no real description, so this one was generated. Check it (WCAG 1.1.1). \n")
+            return severity
     elif shape.has_text_frame:
         alt_text = "Text content: " + shape.text
         f.write(f" \n Shape: {shape.name} \n - Alt Text: {alt_text} \n")

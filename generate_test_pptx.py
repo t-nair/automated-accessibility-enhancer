@@ -2,7 +2,8 @@ import os
 import io
 import zipfile
 from pptx import Presentation
-from pptx.util import Inches
+from pptx.dml.color import RGBColor
+from pptx.util import Inches, Pt
 from PIL import Image
 
 # written next to this script so the tests find it whatever folder they run from
@@ -125,6 +126,32 @@ def make_issue_all_issues_combined():
     save_presentation(prs, "issue_all_issues_combined.pptx")
 
 
+def add_colored_text(slide, name, text, hex_color, size, top):
+    box = slide.shapes.add_textbox(Inches(1), Inches(top), Inches(8), Inches(1))
+    box.name = name
+    run = box.text_frame.paragraphs[0].add_run()
+    run.text = text
+    run.font.size = Pt(size)
+    run.font.color.rgb = RGBColor.from_string(hex_color)
+
+
+def make_issue_low_contrast():
+    prs = Presentation()
+
+    # slide 1 passes: black body text, and mid-grey only at a large size (3.03:1 needs 3:1)
+    passing = prs.slides.add_slide(prs.slide_layouts[6])
+    add_colored_text(passing, "Title 1", "Readable Colours", "949494", 28, 0.5)
+    add_colored_text(passing, "Body 1", "Black text on the white background", "000000", 18, 2)
+
+    # slide 2 fails: light grey body text (2.32:1) and the same mid-grey at body size
+    failing = prs.slides.add_slide(prs.slide_layouts[6])
+    add_colored_text(failing, "Title 1", "Hard To Read", "000000", 28, 0.5)
+    add_colored_text(failing, "Faint Note", "Light grey on white", "AAAAAA", 14, 2)
+    add_colored_text(failing, "Grey Body", "Mid grey at body size", "949494", 14, 3.5)
+
+    save_presentation(prs, "issue_low_contrast.pptx")
+
+
 def make_sim_prezi_export():
     # Simulation, not real Prezi output: see docs/prezi.md. Guessed shape of a
     # "Download PPTX" export: every frame is one slide holding a full-slide
@@ -193,6 +220,7 @@ def main():
     make_issue_empty_slide_no_shapes()
     make_issue_multiple_images_no_alt_text()
     make_issue_all_issues_combined()
+    make_issue_low_contrast()
     make_sim_prezi_export()
 
     make_corrupt_empty_file()
