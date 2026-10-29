@@ -5,6 +5,8 @@ import shutil
 import pytest
 from lxml import etree
 from pptx import Presentation
+from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
@@ -34,6 +36,7 @@ WORKING_FILES = [
     "issue_empty_slide_no_shapes.pptx",
     "issue_multiple_images_no_alt_text.pptx",
     "issue_all_issues_combined.pptx",
+    "issue_low_contrast.pptx",
 ]
 
 
@@ -882,3 +885,122 @@ def test_small_text_is_listed_by_slide_in_the_report(folders, fake_captions):
     assert "Slide 2, Shape: TextBox" in report
     assert "8 pt: 'Tiny source note'" in report
     assert "Slide 1," not in report
+
+
+def add_colored_box(slide, text, hex_color=None, size=14):
+    box = add_sized_box(slide, text, size)
+
+    if hex_color:
+        box.text_frame.paragraphs[0].runs[0].font.color.rgb = RGBColor.from_string(hex_color)
+
+    return box
+
+
+def contrast_names(slide):
+    return [(name, needed) for name, _, needed, _ in z_reorder.find_low_contrast(slide)]
+
+
+def test_contrast_ratio_matches_wcag():
+    assert round(z_reorder.contrast_ratio((0, 0, 0), (1, 1, 1)), 2) == 21
+    assert round(z_reorder.contrast_ratio((1, 1, 1), (1, 1, 1)), 2) == 1
+    grey = tuple(0x77 / 255 for _ in range(3))
+    assert round(z_reorder.contrast_ratio(grey, (1, 1, 1)), 2) == 4.48
+
+
+def test_default_text_on_the_default_background_passes():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.shapes.title.text = "Title"
+    slide.placeholders[1].text = "Body text"
+    add_colored_box(slide, "Plain box")
+
+    assert z_reorder.find_low_contrast(slide) == []
+
+
+def test_light_text_on_white_fails():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    faint = add_colored_box(slide, "Faint", "AAAAAA")
+
+    [(name, ratio, needed, text)] = z_reorder.find_low_contrast(slide)
+    assert (name, round(ratio, 2), needed, text) == (faint.name, 2.32, 4.5, "Faint")
+
+
+def test_large_text_needs_only_three_to_one():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_colored_box(slide, "Large", "949494", size=18)
+    bold = add_colored_box(slide, "Large bold", "949494", size=14)
+    bold.text_frame.paragraphs[0].runs[0].font.bold = True
+    small = add_colored_box(slide, "Small", "949494", size=14)
+
+    assert contrast_names(slide) == [(small.name, 4.5)]
+
+
+def test_a_theme_colour_on_a_solid_slide_background_is_resolved():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    box = add_sized_box(slide, "White text", 14)
+    rpr = box.text_frame.paragraphs[0].runs[0]._r.get_or_add_rPr()
+    fill = etree.SubElement(rpr, qn("a:solidFill"))
+    etree.SubElement(fill, qn("a:schemeClr")).set("val", "bg1")
+
+    assert contrast_names(slide) == [(box.name, 4.5)]
+
+    slide.background.fill.solid()
+    slide.background.fill.fore_color.rgb = RGBColor(0x1F, 0x1F, 0x1F)
+
+    assert contrast_names(slide) == []
+
+
+def test_lum_mod_darkens_a_theme_colour():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    box = add_sized_box(slide, "Darkened white", 14)
+    rpr = box.text_frame.paragraphs[0].runs[0]._r.get_or_add_rPr()
+    color = etree.SubElement(etree.SubElement(rpr, qn("a:solidFill")), qn("a:schemeClr"))
+    color.set("val", "bg1")
+    etree.SubElement(color, qn("a:lumMod")).set("val", "25000")
+
+    assert contrast_names(slide) == []
+
+
+def test_a_filled_shape_behind_the_text_is_its_background():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    panel = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(8), Inches(4))
+    panel.fill.solid()
+    panel.fill.fore_color.rgb = RGBColor(0, 0, 0)
+    on_panel = add_colored_box(slide, "White on black", "FFFFFF")
+
+    assert contrast_names(slide) == []
+
+    on_panel.fill.solid()
+    on_panel.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xF0)
+
+    assert contrast_names(slide) == [(on_panel.name, 4.5)]
+
+
+def test_a_gradient_background_is_listed_as_not_checked():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    slide.background.fill.gradient()
+    box = add_colored_box(slide, "On a gradient", "000000")
+
+    assert z_reorder.find_low_contrast(slide) == [(box.name, None, None, "On a gradient")]
+
+
+def test_low_contrast_is_listed_by_slide_in_the_report(folders, fake_captions):
+    input_folder, output_folder = folders
+    copy_fixture("issue_low_contrast.pptx", input_folder)
+
+    z_reorder.process_one_file("issue_low_contrast.pptx", input_folder, output_folder)
+
+    with open(os.path.join(output_folder, "issue_low_contrast_alt_text"), encoding="utf-8") as f:
+        report = f.read()
+
+    assert "Text with too little contrast (WCAG 1.4.3)" in report
+    assert "Slide 2, Shape: Faint Note - 2.32:1, needs 4.5:1: 'Light grey on white'" in report
+    assert "Slide 2, Shape: Grey Body - 3.03:1, needs 4.5:1" in report
+    assert "Slide 1," not in report
+    assert "Contrast not checked" not in report
