@@ -75,6 +75,7 @@
 
                 <p>You can safely try again below. We keep the original upload for this purpose.</p>
                 <form action="{{ url_for('retry_submission', submission_id=submission.id) }}" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit">Try again</button>
                 </form>
             </div>
@@ -98,6 +99,7 @@
 
         {% if submission.status != "queued" and submission.status != "processing" %}
             <form action="{{ url_for('delete', submission_id=submission.id) }}" method="POST" class="delete-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="delete-button">
                     Delete this submission
                 </button>

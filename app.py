@@ -6,6 +6,7 @@ import sqlite3
 import logging
 import time
 import shutil
+import secrets
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -506,6 +507,34 @@ worker_thread.start()
 
 def start_processing(submission_id, saved_name):
     work_queue.put((submission_id, saved_name))
+
+
+# every form carries this token, so another site can't make a visitor's browser
+# upload, retry or delete files
+def csrf_token():
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+
+    return session["csrf_token"]
+
+
+app.jinja_env.globals["csrf_token"] = csrf_token
+
+
+@app.before_request
+def check_csrf_token():
+    if request.method != "POST":
+        return None
+
+    expected = session.get("csrf_token")
+    sent = request.form.get("csrf_token", "")
+
+    if expected and secrets.compare_digest(sent, expected):
+        return None
+
+    logging.warning(f"POST to {request.path} rejected: the form's security token was missing or wrong.")
+    flash("That form had expired, so nothing was changed. Please try again.")
+    return render_template("index.html", max_file_size_mb=MAX_FILE_SIZE_MB, languages=LANGUAGES), 400
 
 
 @app.route("/")
