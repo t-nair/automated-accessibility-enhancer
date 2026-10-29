@@ -13,6 +13,7 @@ FIXTURE_FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__
 
 MY_OWNER_ID = "owner-doing-the-testing"
 SOMEONE_ELSE = "a-different-visitor"
+CSRF_TOKEN = "token-for-the-testing-browser"
 
 
 @pytest.fixture
@@ -42,6 +43,16 @@ def client(tmp_path, monkeypatch):
     # pretend this browser has already been given an id
     with test_client.session_transaction() as browser_session:
         browser_session["owner_id"] = MY_OWNER_ID
+        browser_session["csrf_token"] = CSRF_TOKEN
+
+    # every real form sends the token, so tests do too unless they pass their own
+    post_without_token = test_client.post
+
+    def post_with_token(url, data=None, **kwargs):
+        return post_without_token(url, data={"csrf_token": CSRF_TOKEN, **(data or {})}, **kwargs)
+
+    test_client.post = post_with_token
+    test_client.post_without_token = post_without_token
 
     return test_client
 
@@ -626,3 +637,111 @@ def test_deleting_a_pdf_removes_its_results_folder(client):
     client.post("/delete/pdf00004", follow_redirects=True)
 
     assert not os.path.exists(folder)
+
+
+def test_every_form_carries_the_security_token(client):
+    add_submission("form0001", status="error")
+
+    for page in ["/", "/status", "/details/form0001"]:
+        response = client.get(page)
+        forms = response.data.count(b'method="POST"')
+
+        assert forms > 0
+        assert response.data.count(CSRF_TOKEN.encode()) == forms
+
+
+def test_a_new_visitor_gets_a_token_on_the_upload_form(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "DATABASE_FILE", str(tmp_path / "submissions.db"))
+    app_module.setup_database()
+
+    fresh_browser = app_module.app.test_client()
+    response = fresh_browser.get("/")
+
+    with fresh_browser.session_transaction() as browser_session:
+        token = browser_session["csrf_token"]
+
+    assert len(token) == 64
+    assert token.encode() in response.data
+
+
+def test_an_upload_without_a_token_is_rejected(client):
+    data = {"presentation": make_upload("control_no_issues.pptx")}
+    response = client.post_without_token("/upload", data=data)
+
+    assert response.status_code == 400
+    assert b"nothing was changed" in response.data
+    assert len(client.queued) == 0
+    assert app_module.get_submissions_for_owner(MY_OWNER_ID) == []
+
+
+def test_an_upload_with_the_wrong_token_is_rejected(client):
+    data = {"presentation": make_upload("control_no_issues.pptx"), "csrf_token": "forged"}
+    response = client.post("/upload", data=data)
+
+    assert response.status_code == 400
+    assert len(client.queued) == 0
+
+
+def test_a_retry_without_a_token_is_rejected(client):
+    add_submission("csrf0001", status="error")
+    copy_into("control_no_issues.pptx", os.path.join(app_module.UPLOAD_FOLDER, "csrf0001_Lecture.pptx"))
+
+    response = client.post_without_token("/retry/csrf0001")
+
+    assert response.status_code == 400
+    assert app_module.get_submission("csrf0001")["status"] == "error"
+    assert len(client.queued) == 0
+
+
+def test_a_retry_with_the_wrong_token_is_rejected(client):
+    add_submission("csrf0002", status="error")
+    copy_into("control_no_issues.pptx", os.path.join(app_module.UPLOAD_FOLDER, "csrf0002_Lecture.pptx"))
+
+    response = client.post("/retry/csrf0002", data={"csrf_token": "forged"})
+
+    assert response.status_code == 400
+    assert len(client.queued) == 0
+
+
+def test_a_delete_without_a_token_is_rejected(client):
+    add_submission("csrf0003")
+
+    response = client.post_without_token("/delete/csrf0003")
+
+    assert response.status_code == 400
+    assert b"nothing was changed" in response.data
+    assert app_module.get_submission("csrf0003") is not None
+
+
+def test_a_delete_with_the_wrong_token_is_rejected(client):
+    add_submission("csrf0004")
+
+    response = client.post("/delete/csrf0004", data={"csrf_token": "forged"})
+
+    assert response.status_code == 400
+    assert app_module.get_submission("csrf0004") is not None
+
+
+def test_a_browser_with_no_token_in_its_session_is_rejected(client):
+    add_submission("csrf0005")
+
+    with client.session_transaction() as browser_session:
+        del browser_session["csrf_token"]
+
+    # an attacker can guess the field name but the session has nothing to match
+    response = client.post("/delete/csrf0005", data={"csrf_token": ""})
+
+    assert response.status_code == 400
+    assert app_module.get_submission("csrf0005") is not None
+
+
+def test_a_rejected_form_can_be_sent_again_from_the_page_it_shows(client):
+    add_submission("csrf0006")
+
+    rejected = client.post_without_token("/delete/csrf0006")
+
+    assert CSRF_TOKEN.encode() in rejected.data
+
+    response = client.post("/delete/csrf0006", follow_redirects=True)
+
+    assert b"Deleted Lecture.pptx" in response.data

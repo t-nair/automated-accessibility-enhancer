@@ -42,11 +42,15 @@ The first time an image is described, the model files download automatically (ab
 
 ## Setup
 
-Clone the project and install the Python packages:
+Clone the project, make a virtual environment and install the Python packages:
 
 ```
+python -m venv .venv
+.venv\Scripts\Activate.ps1      # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+On Windows, if `python` is not recognized, reinstall Python with "Add python.exe to PATH" ticked, or use `py` instead.
 
 If you have an NVIDIA GPU and want to use it, install the CUDA build of PyTorch instead of the default one. You can check whether it worked with:
 
@@ -136,7 +140,7 @@ The tests replace the image description model with a stand-in, so they finish in
 
 GitHub Actions runs these tests on every pull request (`.github/workflows/ci.yml`). The tests stub out the model, so CI never downloads it, but it still installs PyTorch and Transformers because `z_reorder.py` imports them. Not covered yet: a test that runs the real model, and any deployment step. Add a deploy workflow once there is a hosting target.
 
-To make more sample files to test with:
+The sample decks in `Error Test PPTX` are not checked in. `tests/conftest.py` rebuilds them with `generate_test_pptx.py` at the start of every test run. To build them by hand:
 
 ```
 python generate_test_pptx.py
@@ -168,7 +172,7 @@ tests/
     test_z_reorder.py   pipeline tests
     test_app.py         website tests
 
-Error Test PPTX/        sample files, both broken and valid
+Error Test PPTX/        sample files for the tests, generated (not tracked)
 uploads/                files as they are uploaded
 processed/              finished files and reports
 data/submissions.db     the list of submissions (SQLite)
@@ -179,9 +183,7 @@ pptx_input/             folder the script reads (you create it)
 pptx_output/            where the script writes fixed files and reports
 ```
 
-The database is made automatically the first time the app runs. If an older
-`data/submissions.json` is sitting there, its contents are copied in once and the
-JSON file is left alone.
+The database is made automatically the first time the app runs.
 
 ---
 
@@ -193,6 +195,7 @@ JSON file is left alone.
 - **Progress is only kept in memory.** If the server restarts while a file is being processed, that file stays stuck showing "processing".
 - **One file is processed at a time.** This is on purpose, because running several descriptions at once uses more GPU memory than most laptops have.
 - **The development server is not meant for real deployment.** It is fine for testing and demos.
+- **"Permission denied" or "in use" errors** usually mean the deck is open in PowerPoint, or a OneDrive/Dropbox sync is holding it. Close it or pause syncing, then retry.
 
 ---
 
