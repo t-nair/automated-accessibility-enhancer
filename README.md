@@ -72,7 +72,7 @@ On Linux this is usually `sudo apt install libreoffice-impress`. If LibreOffice 
 python app.py
 ```
 
-Then open http://localhost:5000 in a browser.
+This starts the Waitress server on http://localhost:5000; open that in a browser. To put it on a real server, behind HTTPS, see [docs/deployment.md](docs/deployment.md).
 
 From there you can drag and drop one or more files, watch the progress bar while they are processed, read the report for each file, and download the fixed version. If a file fails, the page explains why and gives steps to fix it.
 
@@ -192,7 +192,7 @@ JSON file is left alone.
 - **Visitors are kept apart, but there is no login.** Each browser is given a random id in a signed cookie, and you only see files submitted with that same cookie. Nobody can open or download someone else's file, even with the link. But this is not real security: there are no passwords, clearing your cookies loses your history, and anyone sharing a browser shares a history. Real use needs proper accounts or university sign-in.
 - **Progress is only kept in memory.** If the server restarts while a file is being processed, that file stays stuck showing "processing".
 - **One file is processed at a time.** This is on purpose, because running several descriptions at once uses more GPU memory than most laptops have.
-- **The development server is not meant for real deployment.** It is fine for testing and demos.
+- **It must run as a single process.** The queue, the progress and the model live in the one process, so do not add Gunicorn workers or more instances. See [docs/deployment.md](docs/deployment.md).
 
 ---
 

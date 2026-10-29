@@ -39,6 +39,9 @@ LANGUAGES = {
 
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
+# FLASK_-prefixed environment variables set Flask settings, e.g. FLASK_SESSION_COOKIE_SECURE=true behind HTTPS
+app.config.from_prefixed_env()
+
 # these folders are not stored in git, so make sure they exist on a fresh copy
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(PROCESSED_FOLDER, exist_ok=True)
@@ -738,5 +741,8 @@ def download(submission_id):
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(debug=True, port=port)
+    from waitress import serve
+
+    # one process with threads, never several processes: the queue, the progress and the
+    # captioning model all live in this process (see docs/deployment.md)
+    serve(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5000)))
