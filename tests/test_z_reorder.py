@@ -1097,6 +1097,14 @@ def test_a_linked_shape_is_flagged_by_its_text_or_alt_text():
     assert z_reorder.find_vague_links(slide) == [(button.name, "More", "https://example.com")]
 
 
+def test_a_linked_picture_is_flagged_by_its_alt_text():
+    picture = get_first_picture(os.path.join(FIXTURE_FOLDER, "issue_missing_alt_text.pptx"))
+    z_reorder.set_picture_alt_text(picture, "Click here")
+    picture.click_action.hyperlink.address = "https://example.com"
+
+    assert z_reorder.find_vague_links(picture.part.slide) == [(picture.name, "Click here", "https://example.com")]
+
+
 def test_vague_links_are_listed_by_slide_in_the_report(folders, fake_captions):
     prs = Presentation()
     prs.slides.add_slide(prs.slide_layouts[5]).shapes.title.text = "No links"
