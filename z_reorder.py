@@ -429,9 +429,14 @@ def process_one_file(filename, directory, new_directory, progress_callback=None,
     alt_text_output_file = os.path.join(new_directory, os.path.splitext(filename)[0] + "_alt_text")
 
     try:
+        # the details go to memory first, so the score can be written above them
+        details = io.StringIO()
+        counts = fix_titles_and_log_alt_text(prs, details, filename, progress_callback)
+        issues = counts["issues"] + report_and_set_language(prs, details, filename, language)
+
         with open(alt_text_output_file, "w", encoding="utf-8") as f:
-            counts = fix_titles_and_log_alt_text(prs, f, filename, progress_callback)
-            report_and_set_language(prs, f, filename, language)
+            f.write(severity_summary(issues))
+            f.write(details.getvalue())
     except Exception as e:
         logging.exception(f"Something went wrong processing shapes in {filename}. Error: {e}")
         return False, "We opened your file, but something went wrong while checking your slides for accessibility issues.", [
@@ -788,16 +793,44 @@ def set_language(prs, language):
     run_defaults.set("lang", language)
 
 
+# every problem a check finds gets one of these, worst first, so people know what to fix first
+SEVERITIES = ("critical", "serious", "moderate", "minor")
+
+# ponytail: flat points off per problem, so a long deck scores lower than a short one with
+# the same habits. Scale by slide count if people find that unfair.
+SEVERITY_POINTS = {"critical": 10, "serious": 5, "moderate": 2, "minor": 1}
+
+
+def severity_summary(issues):
+    """The report's opening lines: a score out of 100 and how many problems of each severity.
+
+    issues has one severity per problem found in the file as it was uploaded, including
+    the ones that were fixed, so the score says how accessible the original was.
+    """
+    counts = {severity: issues.count(severity) for severity in SEVERITIES}
+    score = max(0, 100 - sum(SEVERITY_POINTS[severity] * n for severity, n in counts.items()))
+    by_severity = ", ".join(f"{n} {severity}" for severity, n in counts.items())
+
+    return f"Accessibility score: {score}/100 (as uploaded)\nIssues by severity: {by_severity}\n"
+
+
 def report_and_set_language(prs, f, filename, language=None):
     # what was found is written first, so the report describes the deck as it was uploaded
+    issues = []
+
     for problem in find_language_problems(prs):
+        # two languages may be intended, a missing or broken code never is
+        severity = "minor" if problem.startswith("more than one language") else "serious"
+        issues.append(severity)
         logging.warning(f"{filename}: language: {problem}")
-        f.write(f" \n Language (WCAG 3.1.1, 3.1.2): {problem} \n")
+        f.write(f" \n [{severity}] Language (WCAG 3.1.1, 3.1.2): {problem} \n")
 
     if language:
         set_language(prs, language)
         logging.info(f"{filename}: language set to {language}.")
         f.write(f" \n Language set to {language} across the whole presentation. \n")
+
+    return issues
 
 
 def count_images_needing_captions(prs):
@@ -821,7 +854,9 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         progress_callback(captions_done, total_to_caption)
 
     untitled_slides = []
+    reordered_slides = []
     small_text_lines = []
+    issues = []
 
     for slide_number, slide in enumerate(prs.slides, start=1):
 
@@ -844,6 +879,7 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         titles_moved += moved
 
         if moved:
+            reordered_slides.append(slide_number)
             logging.info(f"{filename}: slide {slide_number} moved {moved} title shape(s) to the front.")
 
         # read the shapes back after reordering, so the report lists them in the
@@ -851,7 +887,10 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         for shape in list(slide.shapes):
             needed_caption = needs_caption(shape)
 
-            write_alt_text_line(shape, f, slide_text)
+            severity = write_alt_text_line(shape, f, slide_text)
+
+            if severity:
+                issues.append(severity)
 
             if needed_caption:
                 captions_done += 1
@@ -859,16 +898,24 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
                 if progress_callback is not None:
                     progress_callback(captions_done, total_to_caption)
 
+    # already fixed, but listed so the score matches what was found
+    if reordered_slides:
+        issues += ["moderate"] * len(reordered_slides)
+        slide_list = ", ".join(str(n) for n in reordered_slides)
+        f.write(f" \n [moderate] Title was not read first, now fixed (WCAG 1.3.2): slides {slide_list} \n")
+
     # report only: a generated title would be a guess, so a person adds the real one
     if untitled_slides:
+        issues += ["serious"] * len(untitled_slides)
         slide_list = ", ".join(str(n) for n in untitled_slides)
         logging.warning(f"{filename}: slides with no title: {slide_list}")
-        f.write(f" \n Slides with no title (WCAG 2.4.2): {slide_list} \n")
+        f.write(f" \n [serious] Slides with no title (WCAG 2.4.2): {slide_list} \n")
 
     # report only: raising sizes can break the layout, so a person decides
     if small_text_lines:
+        issues += ["minor"] * len(small_text_lines)
         logging.warning(f"{filename}: {len(small_text_lines)} shape(s) with text below {MIN_FONT_PT:g} pt.")
-        f.write(f" \n Text below {MIN_FONT_PT:g} pt (WCAG 1.4.4): \n")
+        f.write(f" \n [minor] Text below {MIN_FONT_PT:g} pt (WCAG 1.4.4): \n")
 
         for line in small_text_lines:
             f.write(f" - {line} \n")
@@ -876,7 +923,7 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     logging.info(f"{filename}: alt text pass done, {captions_done}/{total_to_caption} image(s) captioned.")
 
     return {"slides": len(prs.slides), "titles_moved": titles_moved, "captioned": captions_done,
-            "small_text": len(small_text_lines)}
+            "small_text": len(small_text_lines), "issues": issues}
 
 
 def get_picture_alt_text(shape):
@@ -889,6 +936,7 @@ def set_picture_alt_text(shape, alt_text):
     shape._element.nvPicPr.cNvPr.set("descr", alt_text)
 
 
+# gives back the severity of the problem it found and fixed, or None if there was none
 def write_alt_text_line(shape, f, slide_text=""):
     if is_picture(shape):
         existing_alt_text = get_picture_alt_text(shape)
@@ -896,6 +944,9 @@ def write_alt_text_line(shape, f, slide_text=""):
         if existing_alt_text and not is_placeholder_alt_text(existing_alt_text, shape.name):
             f.write(f" \n Shape: {shape.name} \n - Alt Text: {existing_alt_text} \n")
         else:
+            # no description at all hides the image, a filename at least says it is there
+            severity = "serious" if existing_alt_text else "critical"
+
             if existing_alt_text:
                 logging.info(
                     f"{shape.name}: replacing filename-style alt text "
@@ -908,7 +959,9 @@ def write_alt_text_line(shape, f, slide_text=""):
                 logging.exception(f"Could not generate a caption for {shape.name}. Falling back to the placeholder {alt_text!r}. Error: {e}")
 
             set_picture_alt_text(shape, alt_text)
-            f.write(f" \n Shape: {shape.name} \n - Alt Text: {alt_text} \n")
+            f.write(f" \n Shape: {shape.name} \n - Alt Text: {alt_text} \n"
+                    f" - [{severity}] The image had no real description, so this one was generated. Check it (WCAG 1.1.1). \n")
+            return severity
     elif shape.has_text_frame:
         alt_text = "Text content: " + shape.text
         f.write(f" \n Shape: {shape.name} \n - Alt Text: {alt_text} \n")
