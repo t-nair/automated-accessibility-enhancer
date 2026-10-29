@@ -280,6 +280,33 @@ def test_moving_an_original_never_replaces_a_file_already_in_the_output_folder(f
     assert os.path.exists(os.path.join(input_folder, "control_no_issues.pptx"))
 
 
+def test_a_move_blocked_by_a_lock_finishes_on_the_next_try(folders, monkeypatch):
+    input_folder, output_folder = folders
+    copy_fixture("control_no_issues.pptx", input_folder)
+    original = os.path.join(input_folder, "control_no_issues.pptx")
+    before = read_bytes(original)
+
+    real_remove = os.remove
+    locked = True
+
+    def remove(path):
+        if locked:
+            raise PermissionError("in use")
+        real_remove(path)
+
+    monkeypatch.setattr(z_reorder.os, "remove", remove)
+    monkeypatch.setattr(z_reorder.time, "sleep", lambda seconds: None)
+
+    assert z_reorder.move_original_to_output(input_folder, output_folder, "control_no_issues.pptx") is not None
+    assert read_bytes(original) == before
+
+    locked = False
+
+    assert z_reorder.move_original_to_output(input_folder, output_folder, "control_no_issues.pptx") is None
+    assert not os.path.exists(original)
+    assert read_bytes(os.path.join(output_folder, "control_no_issues.pptx")) == before
+
+
 def test_a_missing_description_is_written_into_the_updated_file(folders, fake_captions):
     input_folder, output_folder = folders
     copy_fixture("issue_missing_alt_text.pptx", input_folder)

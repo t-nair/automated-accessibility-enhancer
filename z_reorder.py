@@ -379,7 +379,14 @@ def move_original_to_output(directory, new_directory, filename):
             # link then remove: os.link refuses an existing file in one step, while
             # os.rename would silently replace it on Linux and macOS
             if not linked:
-                os.link(original_upload_path, moved_original_path)
+                try:
+                    os.link(original_upload_path, moved_original_path)
+                except FileExistsError:
+                    # an earlier attempt that could not remove the original leaves its
+                    # link behind, which is the same file, so carry on from there
+                    if not os.path.samefile(original_upload_path, moved_original_path):
+                        raise
+
                 linked = True
 
             os.remove(original_upload_path)
