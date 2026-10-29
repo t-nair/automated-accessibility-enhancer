@@ -372,14 +372,17 @@ def move_original_to_output(directory, new_directory, filename):
     original_upload_path = os.path.join(directory, filename)
     moved_original_path = os.path.join(new_directory, filename)
     move_error = None
-
-    # os.rename silently replaces an existing file on Linux and macOS
-    if os.path.exists(moved_original_path):
-        return FileExistsError(f"{moved_original_path} already exists")
+    linked = False
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            os.rename(original_upload_path, moved_original_path)
+            # link then remove: os.link refuses an existing file in one step, while
+            # os.rename would silently replace it on Linux and macOS
+            if not linked:
+                os.link(original_upload_path, moved_original_path)
+                linked = True
+
+            os.remove(original_upload_path)
             return None
         except PermissionError as e:
             move_error = e
