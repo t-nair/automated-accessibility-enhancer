@@ -2,8 +2,10 @@ import os
 import io
 import re
 import time
+import string
 import shutil
 import logging
+import itertools
 import colorsys
 import subprocess
 import torch
@@ -70,6 +72,15 @@ MIN_CONTRAST = 4.5
 MIN_CONTRAST_LARGE = 3.0
 LARGE_PT = 18
 LARGE_BOLD_PT = 14
+
+# WCAG 2.4.4: link text that says nothing about where the link goes. Compared after
+# lowercasing and trimming punctuation, so "Click here!" matches "click here".
+VAGUE_LINK_TEXT = {
+    "", "click", "click here", "click this", "here", "this", "this link", "link", "link here",
+    "go", "go here", "more", "read more", "learn more", "more info", "more information",
+    "info", "details", "see more", "website", "this website", "page", "this page",
+}
+BARE_URL = re.compile(r"^(https?://|www\.)\S+$", re.IGNORECASE)
 
 # what a fill turns out to be when it isn't one solid colour
 CLEAR = "clear"
@@ -639,12 +650,19 @@ def get_run_languages(prs):
 
     return found
 
-def get_text_frames(shapes):
-    """Yield (shape, text_frame) for every text box, placeholder and table cell, inside groups too."""
+def get_shapes(shapes):
+    """Yield every shape, with groups opened up into the shapes inside them."""
     for shape in shapes:
         if get_shape_type(shape) == MSO_SHAPE_TYPE.GROUP:
-            yield from get_text_frames(shape.shapes)
-        elif shape.has_text_frame:
+            yield from get_shapes(shape.shapes)
+        else:
+            yield shape
+
+
+def get_text_frames(shapes):
+    """Yield (shape, text_frame) for every text box, placeholder and table cell, inside groups too."""
+    for shape in get_shapes(shapes):
+        if shape.has_text_frame:
             yield shape, shape.text_frame
         elif shape.has_table:
             for row in shape.table.rows:
@@ -978,6 +996,44 @@ def find_low_contrast(slide):
     return found
 
 
+def is_vague_link_text(text):
+    text = " ".join(text.split())
+    return text.lower().strip(string.punctuation) in VAGUE_LINK_TEXT or bool(BARE_URL.match(text))
+
+
+def find_vague_links(slide):
+    """Return (shape name, link text, address) for each link whose text doesn't say where it goes.
+
+    Links are on text runs, or on a whole shape when clicking the shape follows it. A
+    shape's link text is its own text, or its alt text when it has none, as a screen
+    reader would announce it. Jumps to another slide have no address and are skipped.
+    """
+    found = []
+
+    for shape, text_frame in get_text_frames(slide.shapes):
+        for paragraph in text_frame.paragraphs:
+            # one link can be split over several runs, e.g. by a bold word
+            for address, runs in itertools.groupby(paragraph.runs, key=lambda run: run.hyperlink.address):
+                text = "".join(run.text for run in runs)
+
+                if address is not None and is_vague_link_text(text):
+                    found.append((shape.name, text.strip(), address))
+
+    for shape in get_shapes(slide.shapes):
+        address = shape.click_action.hyperlink.address
+
+        if address is None:
+            continue
+
+        text = shape.text_frame.text if shape.has_text_frame else ""
+        text = text.strip() or (shape._element._nvXxPr.cNvPr.get("descr") or "").strip()
+
+        if is_vague_link_text(text):
+            found.append((shape.name, text, address))
+
+    return found
+
+
 def find_language_problems(prs):
     """List what is wrong with the deck's language, as short sentences for the report.
 
@@ -1132,6 +1188,7 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     small_text_lines = []
     low_contrast_lines = []
     unchecked_contrast_lines = []
+    vague_link_lines = []
     issues = []
 
     for slide_number, slide in enumerate(prs.slides, start=1):
@@ -1150,6 +1207,9 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
             else:
                 low_contrast_lines.append(
                     f"Slide {slide_number}, Shape: {name} - {ratio:.2f}:1, needs {needed:g}:1: {text[:60]!r}")
+
+        for name, text, address in find_vague_links(slide):
+            vague_link_lines.append(f"Slide {slide_number}, Shape: {name} - {text[:60]!r} links to {address}")
 
         if len(slide.shapes) == 0:
             logging.warning(f"{filename}: slide {slide_number} has no shapes, skipping title fix.")
@@ -1216,6 +1276,15 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         f.write(" \n Contrast not checked, the background or text is not one solid colour (WCAG 1.4.3): \n")
 
         for line in unchecked_contrast_lines:
+            f.write(f" - {line} \n")
+
+    # report only: better wording depends on the sentence around the link, so a person writes it
+    if vague_link_lines:
+        issues += ["moderate"] * len(vague_link_lines)
+        logging.warning(f"{filename}: {len(vague_link_lines)} link(s) with text that does not say where they go.")
+        f.write(" \n [moderate] Link text does not say where the link goes (WCAG 2.4.4): \n")
+
+        for line in vague_link_lines:
             f.write(f" - {line} \n")
 
     logging.info(f"{filename}: alt text pass done, {captions_done}/{total_to_caption} image(s) captioned.")

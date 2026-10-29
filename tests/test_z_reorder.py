@@ -1036,3 +1036,76 @@ def test_a_negative_lum_off_stops_at_black():
     etree.SubElement(color, qn("a:lumOff")).set("val", "-50000")
 
     assert z_reorder.color_to_rgb(color, None, None) == (0.0, 0.0, 0.0)
+
+
+def add_link(slide, parts, address="https://www.washington.edu/accessibility/"):
+    """A text box whose runs are the given parts, all linked to address."""
+    box = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1))
+    paragraph = box.text_frame.paragraphs[0]
+
+    for part in parts:
+        run = paragraph.add_run()
+        run.text = part
+        run.hyperlink.address = address
+
+    return box
+
+
+@pytest.mark.parametrize("text", [
+    "click here", "Click Here!", "here", "link", "this link", "Read more...", "Learn more",
+    "more", "more info", "website", "  ", "https://www.washington.edu", "www.washington.edu/accessibility",
+])
+def test_vague_link_text_is_flagged(text):
+    assert z_reorder.is_vague_link_text(text)
+
+
+@pytest.mark.parametrize("text", [
+    "UW accessibility guidelines", "Download the syllabus (PDF)", "Here is the course calendar", "uw.edu",
+])
+def test_descriptive_link_text_is_not_flagged(text):
+    assert not z_reorder.is_vague_link_text(text)
+
+
+def test_a_link_split_over_runs_is_read_as_one_link():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    vague = add_link(slide, ["click ", "here"])
+    add_link(slide, ["UW ", "accessibility guidelines"])
+
+    assert z_reorder.find_vague_links(slide) == [
+        (vague.name, "click here", "https://www.washington.edu/accessibility/")]
+
+
+def test_unlinked_vague_words_are_not_flagged():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_sized_box(slide, "Click here", 14)
+
+    assert z_reorder.find_vague_links(slide) == []
+
+
+def test_a_linked_shape_is_flagged_by_its_text_or_alt_text():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    button = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(2), Inches(1))
+    button.text_frame.text = "More"
+    button.click_action.hyperlink.address = "https://example.com"
+    icon = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(3), Inches(0), Inches(1), Inches(1))
+    icon._element._nvXxPr.cNvPr.set("descr", "Course website")
+    icon.click_action.hyperlink.address = "https://example.com/course"
+
+    assert z_reorder.find_vague_links(slide) == [(button.name, "More", "https://example.com")]
+
+
+def test_vague_links_are_listed_by_slide_in_the_report(folders, fake_captions):
+    prs = Presentation()
+    prs.slides.add_slide(prs.slide_layouts[5]).shapes.title.text = "No links"
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    slide.shapes.title.text = "Resources"
+    add_link(slide, ["here"], "https://example.com/syllabus.pdf")
+
+    _, _, report, _ = run_pipeline_on(prs, folders)
+
+    assert "[moderate] Link text does not say where the link goes (WCAG 2.4.4)" in report
+    assert "Slide 2, Shape: TextBox 2 - 'here' links to https://example.com/syllabus.pdf" in report
+    assert "Slide 1," not in report
