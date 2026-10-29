@@ -35,6 +35,7 @@
         <p>Upload one or more .pptx or .ppt files below. We'll fix the slide reading order so screen readers announce titles first, write descriptions for images that are missing them, and give you a report of what we found, including any problems with the presentation's language. PDFs are rebuilt as a tagged PDF with a title and language; scanned pages are read with OCR and marked for a person to check.</p>
 
         <form action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data" id="upload-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
             <label class="drop-zone" id="drop-zone">
                 <svg class="drop-zone-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
