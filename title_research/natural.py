@@ -16,9 +16,8 @@ import numpy as np
 import methods as M
 import perturb as P
 from evaluate import load
-from features import add_context
 from robustness import FNS, NAMES
-from title_detection import THRESHOLD
+from title_detection import THRESHOLD, add_context
 
 HERE = Path(__file__).parent
 

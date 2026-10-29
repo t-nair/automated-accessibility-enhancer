@@ -5,7 +5,8 @@ from pptx import Presentation
 from pptx.util import Inches
 from PIL import Image
 
-OUTPUT_FOLDER = "Error Test PPTX"
+# written next to this script so the tests find it whatever folder they run from
+OUTPUT_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Error Test PPTX")
 
 
 def make_placeholder_image():
@@ -182,7 +183,7 @@ def make_corrupt_truncated_valid_file():
     print("Created corrupt_truncated_valid_file.pptx")
 
 
-if __name__ == "__main__":
+def main():
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
     make_control_no_issues()
@@ -201,3 +202,7 @@ if __name__ == "__main__":
     make_corrupt_truncated_valid_file()
 
     print("Done. Files were written to: " + OUTPUT_FOLDER)
+
+
+if __name__ == "__main__":
+    main()

@@ -66,6 +66,7 @@
                             <td>
                                 {% if submission.status != "queued" and submission.status != "processing" %}
                                     <form action="{{ url_for('delete', submission_id=submission.id) }}" method="POST" class="delete-form">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <button type="submit" class="delete-button">
                                             Delete
                                             <span class="visually-hidden"> {{ submission.original_filename }}</span>

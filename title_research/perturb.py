@@ -6,8 +6,11 @@ a side-column title, a title in the middle of a hero slide, all-equal font sizes
 titles, big bold body text and arbitrary z-order.
 """
 import random
+import sys
+from pathlib import Path
 
-from features import add_context
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from title_detection import add_context  # noqa: E402
 
 
 def _blank(text, **kw):
