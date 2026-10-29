@@ -4,10 +4,13 @@ import re
 import time
 import shutil
 import logging
+import colorsys
 import subprocess
 import torch
+from lxml import etree
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml.ns import qn
 from pptx.oxml.xmlchemy import OxmlElement
 from PIL import Image
@@ -61,6 +64,17 @@ LANGUAGE_TAG = re.compile(r"^[a-z]{2,3}(-[a-z0-9]{2,8})*$", re.IGNORECASE)
 # WCAG sets no minimum point size, but text this small fails 1.4.4 (Resize Text) in
 # practice and cannot be read when projected. Set MIN_FONT_PT to use a different cutoff.
 MIN_FONT_PT = float(os.environ.get("MIN_FONT_PT", "9"))
+
+# WCAG 1.4.3: 4.5:1 for normal text, 3:1 for large text (18 pt, or 14 pt bold)
+MIN_CONTRAST = 4.5
+MIN_CONTRAST_LARGE = 3.0
+LARGE_PT = 18
+LARGE_BOLD_PT = 14
+
+# what a fill turns out to be when it isn't one solid colour
+CLEAR = "clear"
+UNKNOWN = "unknown"
+WHITE = (1.0, 1.0, 1.0)
 
 CAPTION_MODEL_NAME = "Qwen/Qwen2-VL-2B-Instruct"
 
@@ -471,7 +485,8 @@ def process_one_file(filename, directory, new_directory, progress_callback=None,
 
     logging.info(
         f"Summary: {filename} | {counts['slides']} slide(s), {counts['titles_moved']} title(s) moved, "
-        f"{counts['captioned']} image(s) captioned, {counts['small_text']} shape(s) with small text | report: {alt_text_output_file} | "
+        f"{counts['captioned']} image(s) captioned, {counts['small_text']} shape(s) with small text, "
+        f"{counts['low_contrast']} shape(s) with low contrast | report: {alt_text_output_file} | "
         f"updated deck: {new_filepath} | {time.perf_counter() - started_at:.2f}s")
     return True, None, None
 
@@ -704,6 +719,265 @@ def find_small_text(slide, min_pt=MIN_FONT_PT):
     return found
 
 
+def get_theme(slide):
+    """The master's theme and colour map, which scheme colours like tx1 and accent1 resolve through."""
+    master = slide.slide_layout.slide_master
+    theme = etree.fromstring(master.part.part_related_by(RT.THEME).blob)
+
+    return theme, master._element.find(qn("p:clrMap"))
+
+
+def scheme_rgb(name, theme, clr_map):
+    # ponytail: ignores a clrMapOvr on the slide or layout, which few decks use
+    name = clr_map.get(name, name) if clr_map is not None else name
+    slot = theme.find(".//" + qn("a:clrScheme") + "/" + qn("a:" + name))
+
+    return color_to_rgb(slot[0], theme, clr_map) if slot is not None and len(slot) else None
+
+
+def color_to_rgb(color, theme, clr_map):
+    """(r, g, b) from 0 to 1 for a colour element, or None if it can't be worked out."""
+    tag = etree.QName(color).localname
+
+    if tag == "schemeClr":
+        rgb = scheme_rgb(color.get("val"), theme, clr_map)
+    elif tag in ("srgbClr", "sysClr"):
+        hex_value = color.get("val") if tag == "srgbClr" else color.get("lastClr")
+        rgb = tuple(int(hex_value[i:i + 2], 16) / 255 for i in (0, 2, 4)) if hex_value else None
+    else:
+        return None
+
+    if rgb is None:
+        return None
+
+    lum_mod, lum_off = 1.0, 0.0
+
+    for modifier in color:
+        name = etree.QName(modifier).localname
+
+        if name == "lumMod":
+            lum_mod = int(modifier.get("val")) / 100000
+        elif name == "lumOff":
+            lum_off = int(modifier.get("val")) / 100000
+        else:
+            # ponytail: tint, shade, alpha and the rest are not applied, so the colour is unknown
+            return None
+
+    if lum_mod != 1.0 or lum_off:
+        hue, lightness, saturation = colorsys.rgb_to_hls(*rgb)
+        rgb = colorsys.hls_to_rgb(hue, max(0.0, min(1.0, lightness * lum_mod + lum_off)), saturation)
+
+    return rgb
+
+
+def get_fill(props, theme, clr_map):
+    """The fill set directly on props: an RGB tuple, CLEAR for no fill, UNKNOWN for a fill
+    that isn't one solid colour, or None if props sets no fill at all."""
+    if props is None:
+        return None
+
+    for child in props:
+        name = etree.QName(child).localname
+
+        if name == "solidFill":
+            return (color_to_rgb(child[0], theme, clr_map) if len(child) else None) or UNKNOWN
+        if name == "noFill":
+            return CLEAR
+        if name in ("gradFill", "blipFill", "pattFill", "grpFill"):
+            return UNKNOWN
+
+    return None
+
+
+def get_style_ref_fill(ref, theme, clr_map):
+    """Fill for a fillRef or bgRef, which point into the theme's fill styles by index."""
+    index = int(ref.get("idx", "0"))
+
+    if index == 0:
+        return CLEAR
+
+    style_list = theme.find(".//" + qn("a:bgFillStyleLst" if index >= 1001 else "a:fillStyleLst"))
+    styles = list(style_list) if style_list is not None else []
+    position = index - 1001 if index >= 1001 else index - 1
+
+    if position >= len(styles):
+        return UNKNOWN
+
+    style = styles[position]
+
+    if etree.QName(style).localname != "solidFill" or not len(style) or not len(ref):
+        return get_fill([style], theme, clr_map) or UNKNOWN
+
+    # the style's phClr stands for the colour given on the reference itself
+    color = ref[0] if style[0].get("val") == "phClr" and not len(style[0]) else style[0]
+
+    return color_to_rgb(color, theme, clr_map) or UNKNOWN
+
+
+def get_shape_fill(element, theme, clr_map):
+    if element.tag == qn("p:pic"):
+        return UNKNOWN
+
+    fill = get_fill(element.find(qn("p:spPr")), theme, clr_map)
+
+    if fill is None:
+        ref = element.find(qn("p:style") + "/" + qn("a:fillRef"))
+        fill = get_style_ref_fill(ref, theme, clr_map) if ref is not None else CLEAR
+
+    return fill
+
+
+def get_slide_background(slide, theme, clr_map):
+    for source in (slide, slide.slide_layout, slide.slide_layout.slide_master):
+        background = source._element.find(qn("p:cSld") + "/" + qn("p:bg"))
+
+        if background is None:
+            continue
+
+        background_props = background.find(qn("p:bgPr"))
+
+        if background_props is not None:
+            fill = get_fill(background_props, theme, clr_map)
+            return WHITE if fill == CLEAR else fill or UNKNOWN
+
+        ref = background.find(qn("p:bgRef"))
+
+        if ref is not None:
+            return get_style_ref_fill(ref, theme, clr_map)
+
+    return WHITE
+
+
+def covers(behind, shape):
+    edges = (behind.left, behind.top, behind.width, behind.height, shape.left, shape.top, shape.width, shape.height)
+
+    return None not in edges and (
+        behind.left <= shape.left and behind.top <= shape.top
+        and behind.left + behind.width >= shape.left + shape.width
+        and behind.top + behind.height >= shape.top + shape.height)
+
+
+def get_background(slide, shape, text_frame, theme, clr_map):
+    """Colour behind the text: the shape's own fill, else a filled shape under it, else the slide."""
+    if shape.has_table:
+        # ponytail: table styles are not read, so only cells with their own solid fill are checked
+        fill = get_fill(text_frame._txBody.getparent().find(qn("a:tcPr")), theme, clr_map)
+        return fill if fill not in (None, CLEAR) else UNKNOWN
+
+    fill = get_shape_fill(shape._element, theme, clr_map)
+
+    if fill != CLEAR:
+        return fill
+
+    # ponytail: only looks under top-level shapes, and only at shapes that fully cover it
+    shapes = list(slide.shapes)
+
+    if shape in shapes:
+        for behind in reversed(shapes[:shapes.index(shape)]):
+            if covers(behind, shape):
+                fill = get_shape_fill(behind._element, theme, clr_map)
+
+                if fill != CLEAR:
+                    return fill
+
+    return get_slide_background(slide, theme, clr_map)
+
+
+def get_level_defaults(chain, level):
+    """The defRPr for this paragraph level from each style in the chain, nearest first."""
+    return [style.find(qn(f"a:lvl{level + 1}pPr") + "/" + qn("a:defRPr")) if style is not None else None
+            for style in chain]
+
+
+def get_run_color(run, defaults, shape, theme, clr_map):
+    """Text colour as an RGB tuple, CLEAR for hidden text, or UNKNOWN."""
+    font_ref = shape._element.find(qn("p:style") + "/" + qn("a:fontRef"))
+
+    # the shape style's font colour beats the layout and master, but not the shape's own list style
+    for props in [run._r.find(qn("a:rPr")), defaults[0], font_ref] + defaults[1:]:
+        if props is not None and props is font_ref:
+            return (color_to_rgb(font_ref[0], theme, clr_map) if len(font_ref) else None) or UNKNOWN
+
+        fill = get_fill(props, theme, clr_map)
+
+        if fill is not None:
+            return fill
+
+    return scheme_rgb("tx1", theme, clr_map) or UNKNOWN
+
+
+def is_bold(run, defaults):
+    if run.font.bold is not None:
+        return run.font.bold
+
+    return next((d.get("b") in ("1", "true") for d in defaults if d is not None and d.get("b") is not None), False)
+
+
+def luminance(rgb):
+    channels = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def contrast_ratio(first, second):
+    lighter, darker = sorted((luminance(first) + 0.05, luminance(second) + 0.05), reverse=True)
+
+    return lighter / darker
+
+
+def find_low_contrast(slide):
+    """Return (shape name, worst ratio, ratio needed, text) for each shape with text below WCAG 1.4.3.
+
+    The ratios are None when the shape could not be checked, because the background or
+    text colour is a gradient, picture, table style or a colour effect that isn't read.
+    """
+    found = []
+    theme, clr_map = get_theme(slide)
+
+    for shape, text_frame in get_text_frames(slide.shapes):
+        if not text_frame.text.strip():
+            continue
+
+        chain = get_style_chain(slide, shape, text_frame)
+        fit = text_frame._txBody.find(qn("a:bodyPr") + "/" + qn("a:normAutofit"))
+        scale = int(fit.get("fontScale")) / 100000 if fit is not None and fit.get("fontScale") else 1.0
+        background = get_background(slide, shape, text_frame, theme, clr_map)
+        unchecked = background == UNKNOWN
+        failures = []
+
+        for paragraph in text_frame.paragraphs:
+            defaults = get_level_defaults(chain, paragraph.level)
+
+            for run in paragraph.runs:
+                if unchecked or not run.text.strip():
+                    continue
+
+                color = get_run_color(run, defaults, shape, theme, clr_map)
+
+                if color == UNKNOWN:
+                    unchecked = True
+                    continue
+
+                if color == CLEAR:
+                    continue
+
+                pt = get_run_pt(run, paragraph.level, chain, scale)
+                large = pt >= LARGE_PT or (pt >= LARGE_BOLD_PT and is_bold(run, defaults))
+                needed = MIN_CONTRAST_LARGE if large else MIN_CONTRAST
+                ratio = contrast_ratio(color, background)
+
+                if ratio < needed:
+                    failures.append((ratio, needed, run.text.strip()))
+
+        if failures:
+            ratio, needed, _ = min(failures)
+            found.append((shape.name, ratio, needed, " ".join(text for _, _, text in failures)))
+        elif unchecked:
+            found.append((shape.name, None, None, text_frame.text.strip()))
+
+    return found
+
+
 def find_language_problems(prs):
     """List what is wrong with the deck's language, as short sentences for the report.
 
@@ -856,6 +1130,8 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     untitled_slides = []
     reordered_slides = []
     small_text_lines = []
+    low_contrast_lines = []
+    unchecked_contrast_lines = []
     issues = []
 
     for slide_number, slide in enumerate(prs.slides, start=1):
@@ -867,6 +1143,13 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
         for name, pt, text in find_small_text(slide):
             small_text_lines.append(f"Slide {slide_number}, Shape: {name} - {pt:g} pt: {text[:60]!r}")
+
+        for name, ratio, needed, text in find_low_contrast(slide):
+            if ratio is None:
+                unchecked_contrast_lines.append(f"Slide {slide_number}, Shape: {name}: {text[:60]!r}")
+            else:
+                low_contrast_lines.append(
+                    f"Slide {slide_number}, Shape: {name} - {ratio:.2f}:1, needs {needed:g}:1: {text[:60]!r}")
 
         if len(slide.shapes) == 0:
             logging.warning(f"{filename}: slide {slide_number} has no shapes, skipping title fix.")
@@ -920,10 +1203,25 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         for line in small_text_lines:
             f.write(f" - {line} \n")
 
+    # report only: a replacement colour is a design choice, so a person picks it
+    if low_contrast_lines:
+        issues += ["serious"] * len(low_contrast_lines)
+        logging.warning(f"{filename}: {len(low_contrast_lines)} shape(s) with low contrast text.")
+        f.write(" \n [serious] Text with too little contrast (WCAG 1.4.3): \n")
+
+        for line in low_contrast_lines:
+            f.write(f" - {line} \n")
+
+    if unchecked_contrast_lines:
+        f.write(" \n Contrast not checked, the background or text is not one solid colour (WCAG 1.4.3): \n")
+
+        for line in unchecked_contrast_lines:
+            f.write(f" - {line} \n")
+
     logging.info(f"{filename}: alt text pass done, {captions_done}/{total_to_caption} image(s) captioned.")
 
     return {"slides": len(prs.slides), "titles_moved": titles_moved, "captioned": captions_done,
-            "small_text": len(small_text_lines), "issues": issues}
+            "small_text": len(small_text_lines), "low_contrast": len(low_contrast_lines), "issues": issues}
 
 
 def get_picture_alt_text(shape):
