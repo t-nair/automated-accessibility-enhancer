@@ -1,6 +1,6 @@
 """Title classifiers. Every method maps a slide's record list to (index_or_None).
 
-Records come from features.slide_records. `hide(recs)` removes the placeholder/name cues
+Records come from title_detection.slide_records. `hide(recs)` removes the placeholder/name cues
 so a method can be scored as if the author had typed the title into a plain text box.
 """
 import sys

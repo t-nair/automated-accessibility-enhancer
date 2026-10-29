@@ -5,9 +5,11 @@ title placeholder(s) with text; slides without one have gold == [] (unlabeled: e
 title or a title typed into a text box).
 """
 import pickle
+import sys
 from pathlib import Path
 
-from features import deck_slides
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from title_detection import deck_slides  # noqa: E402
 
 HERE = Path(__file__).parent
 OWN_DECKS = Path(r"C:\Users\nairt\Desktop\GitHub Repos\UW_Accessibility_Enhancer")
