@@ -82,6 +82,9 @@ VAGUE_LINK_TEXT = {
 }
 BARE_URL = re.compile(r"^(https?://|www\.)\S+$", re.IGNORECASE)
 
+# a table cell holding only a number, e.g. "42", "-3.5", "$1,200" or "15%", is data, not a heading
+NUMBER = re.compile(r"^[-+$€£]?\d[\d,.]*%?$")
+
 # what a fill turns out to be when it isn't one solid colour
 CLEAR = "clear"
 UNKNOWN = "unknown"
@@ -1129,6 +1132,41 @@ def find_vague_links(slide):
     return found
 
 
+def looks_like_header_row(row):
+    """A first row reads as headings when every cell has text and none of it is a number."""
+    texts = [cell.text.strip() for cell in row.cells]
+    return all(texts) and not any(NUMBER.match(text) for text in texts)
+
+
+def fix_table_headers(slide):
+    """Turn on the header row flag where the first row reads as headings.
+
+    Returns three lists of table names: headers turned on, tables still without a
+    header row because the first row holds data, and tables with merged or split
+    cells, which screen readers cannot line up with their headers.
+    """
+    fixed, no_header, merged = [], [], []
+
+    for shape in get_shapes(slide.shapes):
+        if not shape.has_table:
+            continue
+
+        table = shape.table
+
+        if not table.first_row:
+            if looks_like_header_row(table.rows[0]):
+                table.first_row = True
+                fixed.append(shape.name)
+            else:
+                no_header.append(shape.name)
+
+        # a split cell is stored as its neighbours being merged, so one check finds both
+        if any(cell.is_merge_origin for row in table.rows for cell in row.cells):
+            merged.append(shape.name)
+
+    return fixed, no_header, merged
+
+
 def find_language_problems(prs):
     """List what is wrong with the deck's language, as short sentences for the report.
 
@@ -1284,6 +1322,9 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     low_contrast_lines = []
     unchecked_contrast_lines = []
     vague_link_lines = []
+    header_fixed_lines = []
+    no_header_lines = []
+    merged_cell_lines = []
     visual_order_lines = []
     issues = []
 
@@ -1306,6 +1347,11 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
         for name, text, address in find_vague_links(slide):
             vague_link_lines.append(f"Slide {slide_number}, Shape: {name} - {text[:60]!r} links to {address}")
+
+        fixed, no_header, merged = fix_table_headers(slide)
+        header_fixed_lines += [f"Slide {slide_number}, Shape: {name}" for name in fixed]
+        no_header_lines += [f"Slide {slide_number}, Shape: {name}" for name in no_header]
+        merged_cell_lines += [f"Slide {slide_number}, Shape: {name}" for name in merged]
 
         if len(slide.shapes) == 0:
             logging.warning(f"{filename}: slide {slide_number} has no shapes, skipping title fix.")
@@ -1396,6 +1442,32 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         f.write(" \n [moderate] Link text does not say where the link goes (WCAG 2.4.4): \n")
 
         for line in vague_link_lines:
+            f.write(f" - {line} \n")
+
+    # already fixed, but listed so the score matches what was found
+    if header_fixed_lines:
+        issues += ["serious"] * len(header_fixed_lines)
+        f.write(" \n [serious] Table had no header row, first row now marked as headers (WCAG 1.3.1): \n")
+
+        for line in header_fixed_lines:
+            f.write(f" - {line} \n")
+
+    # report only: a first row of data would be read out as headings, so a person adds a real one
+    if no_header_lines:
+        issues += ["serious"] * len(no_header_lines)
+        logging.warning(f"{filename}: {len(no_header_lines)} table(s) with no header row.")
+        f.write(" \n [serious] Table has no header row, and its first row looks like data (WCAG 1.3.1): \n")
+
+        for line in no_header_lines:
+            f.write(f" - {line} \n")
+
+    # report only: unmerging changes the table's layout, so a person decides
+    if merged_cell_lines:
+        issues += ["moderate"] * len(merged_cell_lines)
+        logging.warning(f"{filename}: {len(merged_cell_lines)} table(s) with merged or split cells.")
+        f.write(" \n [moderate] Table has merged or split cells (WCAG 1.3.1): \n")
+
+        for line in merged_cell_lines:
             f.write(f" - {line} \n")
 
     logging.info(f"{filename}: alt text pass done, {captions_done}/{total_to_caption} image(s) captioned.")
