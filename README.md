@@ -21,7 +21,7 @@ What happens to a file after it is uploaded:
 3. Each slide is checked, and its title is moved to the front of the reading order. A real title placeholder or a shape whose name contains "title" (case-insensitive) is used when available; otherwise, `title_detection.py` identifies the likely title based on size, position and wording (see `title_research/README.md`). Subtitles are left alone, and running the process again makes no further changes.
 4. Every picture without usable alt text is described by a vision model, and the description is written into the file. A filename (`photo.png`) or a generic PowerPoint name (`Picture 3`) counts as missing alt text. Descriptions written by a person are never overwritten.
 5. The language is checked. A deck with no default language, an invalid language code or more than one language is listed in the report. If a language was chosen on the upload form, it is then set across the whole deck
-6. An updated `.pptx` and a report are written to the output folder
+6. An updated `.pptx` and a report are written to the output folder. Under the score, the report lists every change it made (titles moved, descriptions written, language set) by slide, with the value before and after
 
 See [docs/wcag-coverage.md](docs/wcag-coverage.md) for which WCAG 2.1 criteria are fixed, reported only, or not covered yet.
 

@@ -472,10 +472,12 @@ def process_one_file(filename, directory, new_directory, progress_callback=None,
         # the details go to memory first, so the score can be written above them
         details = io.StringIO()
         counts = fix_titles_and_log_alt_text(prs, details, filename, progress_callback)
-        issues = counts["issues"] + report_and_set_language(prs, details, filename, language)
+        language_issues, language_changes = report_and_set_language(prs, details, filename, language)
+        issues = counts["issues"] + language_issues
 
         with open(alt_text_output_file, "w", encoding="utf-8") as f:
             f.write(severity_summary(issues))
+            f.write(changes_summary(counts["changes"] + language_changes))
             f.write(details.getvalue())
     except Exception as e:
         logging.exception(f"Something went wrong processing shapes in {filename}. Error: {e}")
@@ -1159,9 +1161,19 @@ def severity_summary(issues):
     return f"Accessibility score: {score}/100 (as uploaded)\nIssues by severity: {by_severity}\n"
 
 
+def changes_summary(changes):
+    """Every change written into the updated file, with its value before and after, for a reviewer to check."""
+    if not changes:
+        return " \n Changes made: none \n"
+
+    return f" \n Changes made ({len(changes)}): \n" + "".join(f" - {change} \n" for change in changes)
+
+
 def report_and_set_language(prs, f, filename, language=None):
+    """Gives back the severity of each language problem, and the change made if a language was set."""
     # what was found is written first, so the report describes the deck as it was uploaded
     issues = []
+    changes = []
 
     for problem in find_language_problems(prs):
         # two languages may be intended, a missing or broken code never is
@@ -1171,11 +1183,17 @@ def report_and_set_language(prs, f, filename, language=None):
         f.write(f" \n [{severity}] Language (WCAG 3.1.1, 3.1.2): {problem} \n")
 
     if language:
+        before = [get_default_language(prs) or "not set"] + sorted(get_run_languages(prs))
+        before = list(dict.fromkeys(before))
+
+        if before != [language]:
+            changes.append(f"Whole presentation, language - before: {', '.join(before)}, after: {language}")
+
         set_language(prs, language)
         logging.info(f"{filename}: language set to {language}.")
         f.write(f" \n Language set to {language} across the whole presentation. \n")
 
-    return issues
+    return issues, changes
 
 
 def count_images_needing_captions(prs):
@@ -1205,6 +1223,7 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     unchecked_contrast_lines = []
     vague_link_lines = []
     issues = []
+    changes = []
 
     for slide_number, slide in enumerate(prs.slides, start=1):
 
@@ -1231,6 +1250,7 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
             continue
 
         slide_text = get_slide_text(slide)
+        order_before = ", ".join(shape.name for shape in slide.shapes)
 
         moved = move_titles_to_front(slide)
 
@@ -1238,12 +1258,15 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
         if moved:
             reordered_slides.append(slide_number)
+            order_after = ", ".join(shape.name for shape in slide.shapes)
+            changes.append(f"Slide {slide_number}, reading order - before: {order_before}, after: {order_after}")
             logging.info(f"{filename}: slide {slide_number} moved {moved} title shape(s) to the front.")
 
         # read the shapes back after reordering, so the report lists them in the
         # order a screen reader will actually announce them
         for shape in list(slide.shapes):
             needed_caption = needs_caption(shape)
+            alt_text_before = get_picture_alt_text(shape) if needed_caption else None
 
             severity = write_alt_text_line(shape, f, slide_text)
 
@@ -1251,6 +1274,9 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
                 issues.append(severity)
 
             if needed_caption:
+                changes.append(
+                    f"Slide {slide_number}, Shape: {shape.name} - alt text before: "
+                    f"{repr(alt_text_before) if alt_text_before else 'none'}, after: {get_picture_alt_text(shape)!r}")
                 captions_done += 1
 
                 if progress_callback is not None:
@@ -1305,7 +1331,8 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     logging.info(f"{filename}: alt text pass done, {captions_done}/{total_to_caption} image(s) captioned.")
 
     return {"slides": len(prs.slides), "titles_moved": titles_moved, "captioned": captions_done,
-            "small_text": len(small_text_lines), "low_contrast": len(low_contrast_lines), "issues": issues}
+            "small_text": len(small_text_lines), "low_contrast": len(low_contrast_lines), "issues": issues,
+            "changes": changes}
 
 
 def get_picture_alt_text(shape):

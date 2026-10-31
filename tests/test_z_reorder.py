@@ -751,6 +751,31 @@ def run_pipeline_on(prs, folders, language=None):
     return ok, message, report, Presentation(os.path.join(output_folder, "deck_updated.pptx"))
 
 
+def test_the_report_lists_each_change_with_its_value_before_and_after(folders, fake_captions):
+    _, _, report, _ = run_pipeline_on(
+        Presentation(os.path.join(FIXTURE_FOLDER, "issue_title_not_first_in_order.pptx")), folders)
+
+    assert "Changes made (1):" in report
+    assert "Slide 1, reading order - before: Body Text 1, Title 1, after: Title 1, Body Text 1" in report
+
+    _, _, report, _ = run_pipeline_on(
+        Presentation(os.path.join(FIXTURE_FOLDER, "issue_missing_alt_text.pptx")), folders)
+
+    assert "alt text before: none, after: 'A test caption'" in report
+
+    _, _, report, _ = run_pipeline_on(make_language_deck(["fr-FR"]), folders, language="en-US")
+
+    assert "Whole presentation, language - before: " in report
+    assert "fr-FR, after: en-US" in report
+
+
+def test_a_deck_that_needed_nothing_reports_no_changes(folders, fake_captions):
+    _, _, report, _ = run_pipeline_on(
+        Presentation(os.path.join(FIXTURE_FOLDER, "control_no_issues.pptx")), folders)
+
+    assert "Changes made: none" in report
+
+
 def make_language_deck(run_languages):
     """One text box per entry, each run marked with that lang value (None leaves it unmarked)."""
     prs = Presentation()
