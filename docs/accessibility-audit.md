@@ -135,6 +135,8 @@ need a manual pass for:
 
 ## Re-running this
 
+CI re-runs the default-ruleset pass on every push and pull request: [tests/test_axe.py](../tests/test_axe.py) loads each state above and fails on any violation. The steps below are for the all-rules pass, or for checking a page by hand.
+
 Each page can be audited with axe DevTools, or without the extension by pasting axe-core
 into the browser console:
 

@@ -13,4 +13,5 @@ jobs:
       # CPU-only torch is far smaller than the default CUDA build; the tests never run the model
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: pip install -r requirements.txt
+      - run: python -m playwright install --with-deps chromium
       - run: python -m pytest tests/ -q
