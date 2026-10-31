@@ -1293,3 +1293,75 @@ def test_vague_links_are_listed_by_slide_in_the_report(folders, fake_captions):
     assert "[moderate] Link text does not say where the link goes (WCAG 2.4.4)" in report
     assert "Slide 2, Shape: TextBox 2 - 'here' links to https://example.com/syllabus.pdf" in report
     assert "Slide 1," not in report
+
+
+def add_table(slide, rows, first_row=False):
+    """A table filled with rows of text, its header row flag set to first_row."""
+    shape = slide.shapes.add_table(len(rows), len(rows[0]), Inches(1), Inches(1), Inches(6), Inches(2))
+    shape.table.first_row = first_row
+
+    for cells, row in zip(rows, shape.table.rows):
+        for text, cell in zip(cells, row.cells):
+            cell.text = text
+
+    return shape
+
+
+def test_a_first_row_of_headings_is_marked_as_the_header_row():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    table = add_table(slide, [["Week", "Topic"], ["1", "Intro"]])
+
+    assert z_reorder.fix_table_headers(slide) == ([table.name], [], [])
+    assert table.table.first_row
+
+
+@pytest.mark.parametrize("first_row", [["1", "Intro"], ["Week", ""], ["$1,200", "15%"]])
+def test_a_first_row_of_data_is_reported_and_left_alone(first_row):
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    table = add_table(slide, [first_row, ["2", "Methods"]])
+
+    assert z_reorder.fix_table_headers(slide) == ([], [table.name], [])
+    assert not table.table.first_row
+
+
+def test_a_table_that_already_has_a_header_row_is_left_alone():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_table(slide, [["1", "Intro"]], first_row=True)
+
+    assert z_reorder.fix_table_headers(slide) == ([], [], [])
+
+
+def test_merged_cells_are_reported_and_the_header_row_is_still_fixed():
+    # two separate problems: merged cells do not stop the header row being marked
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    table = add_table(slide, [["Week", "Topic"], ["1", "Intro"], ["2", "Methods"]])
+    table.table.cell(1, 0).merge(table.table.cell(2, 0))
+
+    assert z_reorder.fix_table_headers(slide) == ([table.name], [], [table.name])
+    assert table.table.first_row
+    assert table.table.cell(1, 0).is_merge_origin
+
+
+def test_table_headers_are_reported_and_a_second_run_changes_nothing(folders, fake_captions):
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    slide.shapes.title.text = "Schedule"
+    add_table(slide, [["Week", "Topic"], ["1", "Intro"]])
+    add_table(slide, [["1", "Intro"], ["2", "Methods"]])
+
+    _, _, report, updated = run_pipeline_on(prs, folders)
+
+    assert "[serious] Table had no header row, first row now marked as headers (WCAG 1.3.1)" in report
+    assert "[serious] Table has no header row, and its first row looks like data (WCAG 1.3.1)" in report
+    assert [shape.table.first_row for shape in updated.slides[0].shapes if shape.has_table] == [True, False]
+    assert "Changes made (1):" in report
+    assert "header row before: off, after: on" in report
+
+    _, _, report, again = run_pipeline_on(updated, folders)
+
+    assert "first row now marked as headers" not in report
+    assert [shape.table.first_row for shape in again.slides[0].shapes if shape.has_table] == [True, False]
