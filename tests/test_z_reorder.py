@@ -1,4 +1,5 @@
 import os
+import copy
 import sys
 import shutil
 
@@ -461,7 +462,7 @@ def names_in_order(slide):
 def test_a_title_that_is_not_first_is_moved_to_the_front():
     slide = build_slide(["Body 1", "Title 1"])
 
-    assert z_reorder.move_titles_to_front(slide) == 1
+    assert z_reorder.fix_reading_order(slide) == 1
     assert names_in_order(slide) == ["Title 1", "Body 1"]
 
 
@@ -471,44 +472,44 @@ def test_two_titles_keep_their_relative_order():
     # these came back as Title B, Title A
     slide = build_slide(["Body 1", "Title A", "Title B"])
 
-    assert z_reorder.move_titles_to_front(slide) == 2
+    assert z_reorder.fix_reading_order(slide) == 2
     assert names_in_order(slide) == ["Title A", "Title B", "Body 1"]
 
 
 def test_a_title_already_at_the_front_is_left_alone():
     slide = build_slide(["Title 1", "Body 1"])
 
-    assert z_reorder.move_titles_to_front(slide) == 0
+    assert z_reorder.fix_reading_order(slide) == 0
     assert names_in_order(slide) == ["Title 1", "Body 1"]
 
 
 def test_reordering_a_second_time_changes_nothing():
     slide = build_slide(["Body 1", "Title 1"])
 
-    z_reorder.move_titles_to_front(slide)
+    z_reorder.fix_reading_order(slide)
 
-    assert z_reorder.move_titles_to_front(slide) == 0
+    assert z_reorder.fix_reading_order(slide) == 0
     assert names_in_order(slide) == ["Title 1", "Body 1"]
 
 
 def test_a_lowercase_title_name_is_still_a_title():
     slide = build_slide(["Body 1", "title 1"])
 
-    assert z_reorder.move_titles_to_front(slide) == 1
+    assert z_reorder.fix_reading_order(slide) == 1
     assert names_in_order(slide) == ["title 1", "Body 1"]
 
 
 def test_a_subtitle_is_not_treated_as_a_title():
     slide = build_slide(["Body 1", "Subtitle 2"])
 
-    assert z_reorder.move_titles_to_front(slide) == 0
+    assert z_reorder.fix_reading_order(slide) == 0
     assert names_in_order(slide) == ["Body 1", "Subtitle 2"]
 
 
 def test_a_slide_with_no_title_is_left_alone():
     slide = build_slide(["Body 1", "Body 2"])
 
-    assert z_reorder.move_titles_to_front(slide) == 0
+    assert z_reorder.fix_reading_order(slide) == 0
     assert names_in_order(slide) == ["Body 1", "Body 2"]
 
 
@@ -545,7 +546,7 @@ def test_a_title_typed_into_a_text_box_is_found_and_moved_to_the_front():
     # nothing here says "title": not the placeholder type, not the shape name
     slide = build_text_slide([("Body", BODY_TEXT, 2.5, 18), ("TextBox 7", "The Water Cycle", 0.4, 40)])
 
-    assert z_reorder.move_titles_to_front(slide) == 1
+    assert z_reorder.fix_reading_order(slide) == 1
     assert names_in_order(slide) == ["TextBox 7", "Body"]
 
 
@@ -554,7 +555,7 @@ def test_a_title_below_a_small_kicker_line_is_still_found():
                               ("Kicker", "CHAPTER 3", 0.2, 12),
                               ("Heading", "Evaporation and Rain", 0.7, 36)])
 
-    z_reorder.move_titles_to_front(slide)
+    z_reorder.fix_reading_order(slide)
 
     assert names_in_order(slide)[0] == "Heading"
 
@@ -563,13 +564,13 @@ def test_a_real_title_is_never_second_guessed(monkeypatch):
     monkeypatch.setattr(z_reorder, "guess_title", lambda slide: pytest.fail("guess_title was called"))
     slide = build_slide(["Body 1", "Title 1"])
 
-    assert z_reorder.move_titles_to_front(slide) == 1
+    assert z_reorder.fix_reading_order(slide) == 1
 
 
 def test_a_slide_of_only_body_paragraphs_gets_no_guessed_title():
     slide = build_text_slide([("A", BODY_TEXT, 1.0, 18), ("B", BODY_TEXT, 3.5, 18)])
 
-    assert z_reorder.move_titles_to_front(slide) == 0
+    assert z_reorder.fix_reading_order(slide) == 0
     assert names_in_order(slide) == ["A", "B"]
 
 
@@ -587,8 +588,97 @@ def test_a_missing_title_model_leaves_the_slide_alone(monkeypatch):
     monkeypatch.setattr(title_detection, "_model", False)
     slide = build_text_slide([("Body", BODY_TEXT, 2.5, 18), ("TextBox 7", "The Water Cycle", 0.4, 40)])
 
-    assert z_reorder.move_titles_to_front(slide) == 0
+    assert z_reorder.fix_reading_order(slide) == 0
     assert names_in_order(slide) == ["Body", "TextBox 7"]
+
+
+# --- reading order beyond titles ----------------------------------------------
+
+
+def add_footer(slide):
+    """Copy the layout's footer placeholder onto the slide, the way PowerPoint does when footers are on."""
+    layout_footer = next(ph for ph in slide.slide_layout.placeholders
+                         if ph.placeholder_format.type == z_reorder.PP_PLACEHOLDER.FOOTER)
+    slide.shapes._spTree.append(copy.deepcopy(layout_footer._element))
+
+    return slide.shapes[-1]
+
+
+def test_a_subtitle_read_before_the_title_is_moved_after_it():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[0])
+    title, subtitle = slide.shapes.title, slide.placeholders[1]
+    title._element.addprevious(subtitle._element)
+
+    assert z_reorder.fix_reading_order(slide) == 1
+    assert names_in_order(slide) == [title.name, subtitle.name]
+
+
+def test_a_footer_read_before_the_content_is_moved_to_the_end():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    slide.shapes.title.text = "Results"
+    footer = add_footer(slide)
+    body = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(8), Inches(1))
+    slide.shapes.title._element.addnext(footer._element)
+
+    assert z_reorder.fix_reading_order(slide) == 1
+    assert names_in_order(slide) == [slide.shapes.title.name, body.name, footer.name]
+    assert z_reorder.fix_reading_order(slide) == 0
+
+
+def test_content_shapes_keep_the_order_the_author_gave_them():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    slide.shapes.title.text = "Results"
+    diagram = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1), Inches(2), Inches(2), Inches(2))
+    body = slide.shapes.add_textbox(Inches(4), Inches(2), Inches(4), Inches(1))
+    slide.shapes.title._element.addprevious(body._element)
+
+    z_reorder.fix_reading_order(slide)
+
+    assert names_in_order(slide) == [slide.shapes.title.name, body.name, diagram.name]
+
+
+def build_positioned_slide(boxes):
+    """A blank slide with text boxes given as (name, left, top) in inches, in z-order."""
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    for name, left, top in boxes:
+        box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(3), Inches(1))
+        box.name = name
+
+    return slide
+
+
+def test_a_shape_above_another_but_read_after_it_is_found():
+    slide = build_positioned_slide([("Lower", 1, 4), ("Upper", 1, 2)])
+
+    assert z_reorder.find_out_of_visual_order(slide) == [("Upper", "Lower")]
+
+
+def test_shapes_read_top_to_bottom_are_not_reported():
+    slide = build_positioned_slide([("Upper", 1, 2), ("Lower", 1, 4)])
+
+    assert z_reorder.find_out_of_visual_order(slide) == []
+
+
+def test_shapes_in_different_columns_are_not_compared():
+    # left column read first, even though the right column starts higher up
+    slide = build_positioned_slide([("Left", 1, 4), ("Right", 5, 2)])
+
+    assert z_reorder.find_out_of_visual_order(slide) == []
+
+
+def test_shapes_read_out_of_visual_order_are_listed_in_the_report(folders, fake_captions):
+    slide = build_positioned_slide([("Lower", 1, 4), ("Upper", 1, 2)])
+
+    ok, _, report, updated = run_pipeline_on(slide.part.package.presentation_part.presentation, folders)
+
+    assert ok
+    assert "Slide 1, Shape: Upper is above Lower but is read after it" in report
+    assert names_in_order(updated.slides[0]) == ["Lower", "Upper"]
 
 
 # --- alt text that is not really alt text ------------------------------------

@@ -513,7 +513,7 @@ def process_one_file(filename, directory, new_directory, progress_callback=None,
         ]
 
     logging.info(
-        f"Summary: {filename} | {counts['slides']} slide(s), {counts['titles_moved']} title(s) moved, "
+        f"Summary: {filename} | {counts['slides']} slide(s), {counts['shapes_moved']} shape(s) moved, "
         f"{counts['captioned']} image(s) captioned, {counts['small_text']} shape(s) with small text, "
         f"{counts['low_contrast']} shape(s) with low contrast | report: {alt_text_output_file} | "
         f"updated deck: {new_filepath} | {time.perf_counter() - started_at:.2f}s")
@@ -589,42 +589,122 @@ def needs_caption(shape):
     return not alt_text or is_placeholder_alt_text(alt_text, shape.name)
 
 
-def move_titles_to_front(slide):
-    """Move title shapes to the front of the slide's reading order.
-
-    Returns the number of shapes moved. The shape list is snapshotted before any
-    mutation: re-reading slide.shapes[0] while reordering re-anchors on a shape
-    that has already moved, which reverses the order of a slide with more than
-    one title.
-    """
-    shapes = list(slide.shapes)
+def find_titles(slide, shapes):
+    """The slide's title shapes, or the one shape the model thinks reads like a title."""
     titles = [shape for shape in shapes if is_title(shape)]
 
-    if not titles:
-        # no title placeholder and no shape named "title", so the author probably typed the
-        # title into a text box or a body placeholder. Ask the model which shape reads like one.
-        guess = guess_title(slide)
-        guessed_name = guess.name if guess is not None else "no title"
-        logging.info(f"No title placeholder; model guessed {guessed_name!r}.")
-        titles = [shape for shape in shapes if guess is not None and shape._element is guess._element]
+    if titles:
+        return titles
 
-    if not titles:
+    # no title placeholder and no shape named "title", so the author probably typed the
+    # title into a text box or a body placeholder. Ask the model which shape reads like one.
+    guess = guess_title(slide)
+    guessed_name = guess.name if guess is not None else "no title"
+    logging.info(f"No title placeholder; model guessed {guessed_name!r}.")
+
+    return [shape for shape in shapes if guess is not None and shape._element is guess._element]
+
+
+def get_placeholder_type(shape):
+    try:
+        return shape.placeholder_format.type if shape.is_placeholder else None
+    except (AttributeError, KeyError, ValueError):
+        return None
+
+
+def get_reading_rank(shape, titles):
+    """Where a shape belongs by its role: titles, then subtitles, then content, then footers."""
+    if any(shape._element is title._element for title in titles):
         return 0
+
+    placeholder_type = get_placeholder_type(shape)
+
+    if placeholder_type == PP_PLACEHOLDER.SUBTITLE:
+        return 1
+
+    # the date, footer and slide number repeat on every slide, so they are read last
+    if placeholder_type in FURNITURE_PH:
+        return 3
+
+    return 2
+
+
+def fix_reading_order(slide, titles=None):
+    """Put the slide's shapes in reading order by role: titles, subtitles, content, footers.
+
+    Pass titles when the caller already found them, so the model is not asked twice.
+    Returns the number of shapes moved. Shapes with the same role keep the order
+    they had, since the order of body text, pictures and tables is the author's
+    call. The shape list is snapshotted before any mutation, so moving one shape
+    never changes where the next one is put.
+    """
+    shapes = list(slide.shapes)
+
+    if titles is None:
+        titles = find_titles(slide, shapes)
+
+    ranks = [get_reading_rank(shape, titles) for shape in shapes]
+    ordered = [shape for _, shape in sorted(zip(ranks, shapes), key=lambda pair: pair[0])]
 
     # already in the right order, so nothing to do. This also makes a second run
     # over an already-processed deck a no-op.
-    if shapes[:len(titles)] == titles:
+    if ordered == shapes:
         return 0
 
-    # Anchor on the first non-title shape rather than shapes[0]. If shapes[0] is
-    # itself a title, inserting the remaining titles before it puts them in
-    # reverse order. The early return above guarantees a non-title shape exists.
-    anchor = next(shape for shape in shapes if not is_title(shape))._element
+    # nvGrpSpPr and grpSpPr always come before the shapes in the shape tree
+    previous = shapes[0]._element.getprevious()
 
-    for title in titles:
-        anchor.addprevious(title._element)
+    for shape in ordered:
+        previous.addnext(shape._element)
+        previous = shape._element
 
-    return len(titles)
+    # a shape counts as moved when something that belongs after it was read before it
+    return sum(1 for i, rank in enumerate(ranks) if any(earlier > rank for earlier in ranks[:i]))
+
+
+def get_position(shape):
+    """(left, top, right, bottom) in EMU, or None when the shape has no position."""
+    try:
+        left, top, width, height = shape.left, shape.top, shape.width, shape.height
+    except (AttributeError, KeyError, ValueError):
+        return None
+
+    if None in (left, top, width, height):
+        return None
+
+    return left, top, left + width, top + height
+
+
+def find_out_of_visual_order(slide, titles=()):
+    """Content shapes that sit above another shape in the same column but are read after it.
+
+    Returns (later shape name, earlier shape name) pairs, at most one per shape.
+    Only shapes stacked in one column are compared: side-by-side shapes could be
+    two columns or one row, and which to read first is the author's call.
+    """
+    shapes = [shape for shape in slide.shapes if get_reading_rank(shape, titles) == 2]
+    positions = [get_position(shape) for shape in shapes]
+    found = []
+
+    for i, (shape, position) in enumerate(zip(shapes, positions)):
+        if position is None:
+            continue
+
+        left, top, right, bottom = position
+
+        for earlier, earlier_position in zip(shapes[:i], positions[:i]):
+            if earlier_position is None:
+                continue
+
+            earlier_left, earlier_top, earlier_right, _ = earlier_position
+
+            same_column = left < earlier_right and earlier_left < right
+
+            if same_column and bottom <= earlier_top:
+                found.append((shape.name, earlier.name))
+                break
+
+    return found
 
 
 def has_title(slide):
@@ -1230,7 +1310,7 @@ def count_images_needing_captions(prs):
 def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     total_to_caption = count_images_needing_captions(prs)
     captions_done = 0
-    titles_moved = 0
+    shapes_moved = 0
     logging.info(f"{filename}: {total_to_caption} image(s) need a caption.")
 
     if progress_callback is not None:
@@ -1245,6 +1325,7 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     header_fixed_lines = []
     no_header_lines = []
     merged_cell_lines = []
+    visual_order_lines = []
     issues = []
 
     for slide_number, slide in enumerate(prs.slides, start=1):
@@ -1278,13 +1359,17 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
         slide_text = get_slide_text(slide)
 
-        moved = move_titles_to_front(slide)
+        titles = find_titles(slide, list(slide.shapes))
+        moved = fix_reading_order(slide, titles)
 
-        titles_moved += moved
+        shapes_moved += moved
 
         if moved:
             reordered_slides.append(slide_number)
-            logging.info(f"{filename}: slide {slide_number} moved {moved} title shape(s) to the front.")
+            logging.info(f"{filename}: slide {slide_number} moved {moved} shape(s) into reading order.")
+
+        for later, earlier in find_out_of_visual_order(slide, titles):
+            visual_order_lines.append(f"Slide {slide_number}, Shape: {later} is above {earlier} but is read after it")
 
         # read the shapes back after reordering, so the report lists them in the
         # order a screen reader will actually announce them
@@ -1306,7 +1391,18 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     if reordered_slides:
         issues += ["moderate"] * len(reordered_slides)
         slide_list = ", ".join(str(n) for n in reordered_slides)
-        f.write(f" \n [moderate] Title was not read first, now fixed (WCAG 1.3.2): slides {slide_list} \n")
+        f.write(f" \n [moderate] Title, subtitle or footer was out of reading order, now fixed (WCAG 1.3.2): "
+                f"slides {slide_list} \n")
+
+    # report only: the order of body text, pictures and tables is the author's call, so a person checks it
+    if visual_order_lines:
+        issues += ["moderate"] * len(visual_order_lines)
+        logging.warning(f"{filename}: {len(visual_order_lines)} shape(s) read after a shape below them.")
+        f.write(" \n [moderate] Shapes read in a different order than they appear, check the Reading Order pane "
+                "(WCAG 1.3.2): \n")
+
+        for line in visual_order_lines:
+            f.write(f" - {line} \n")
 
     # report only: a generated title would be a guess, so a person adds the real one
     if untitled_slides:
@@ -1376,7 +1472,7 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
     logging.info(f"{filename}: alt text pass done, {captions_done}/{total_to_caption} image(s) captioned.")
 
-    return {"slides": len(prs.slides), "titles_moved": titles_moved, "captioned": captions_done,
+    return {"slides": len(prs.slides), "shapes_moved": shapes_moved, "captioned": captions_done,
             "small_text": len(small_text_lines), "low_contrast": len(low_contrast_lines), "issues": issues}
 
 
