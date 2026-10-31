@@ -32,7 +32,7 @@ It was built as part of the **University of Washington Advancing Accessibility f
 
 | Check | WCAG 2.1 | What happens |
 |---|---|---|
-| Slide titles read first | 1.3.2 | **Fixed.** The title is moved to the front of the reading order so screen readers announce it first. Titles typed into a text box are found by a small trained model ([title_research/](title_research/README.md)). |
+| Reading order | 1.3.2 | **Fixed** by role: the title first, then the subtitle, then the content in the author's order, then the date, footer and slide number. Titles typed into a text box are found by a small trained model ([title_research/](title_research/README.md)). A shape that sits above another but is read after it is reported. |
 | Images with no description | 1.1.1 | **Fixed.** A local vision model writes a description into the file. A filename (`photo.png`) or a generic name (`Picture 3`) counts as missing. Descriptions a person wrote are never overwritten. |
 | Presentation language | 3.1.1, 3.1.2 | **Fixed** when you pick a language on upload: set across every slide, master and layout. A missing, invalid or mixed language is always reported. |
 | Slides with no title | 2.4.2 | Reported, by slide. |
@@ -58,7 +58,7 @@ Issues by severity: 1 critical, 2 serious, 1 moderate, 1 minor
  - Alt Text: A bar chart comparing LED and incandescent efficiency.
  - [critical] The image had no real description, so this one was generated. Check it (WCAG 1.1.1).
 
- [moderate] Title was not read first, now fixed (WCAG 1.3.2): slides 2
+ [moderate] Title, subtitle or footer was out of reading order, now fixed (WCAG 1.3.2): slides 2
  [serious] Slides with no title (WCAG 2.4.2): 4
  [minor] Text below 9 pt (WCAG 1.4.4):
  - Slide 3, Shape: Footnote - 8 pt: 'Source: DOE 2024'
@@ -148,7 +148,7 @@ This writes a tagged PDF, an HTML companion and a JSON manifest. PDFs with image
 
 1. The upload is saved, recorded in SQLite and put on the queue. The original is kept untouched, so retries and restarts can start again from it.
 2. A `.ppt` is converted to `.pptx` with LibreOffice. A `.pdf` goes to the PDF pipeline instead.
-3. Each slide's title is moved to the front of the reading order. A real title placeholder, or a shape named "title", is used when there is one; otherwise [title_detection.py](title_detection.py) picks the likely title from its size, position and wording. Running it again changes nothing.
+3. Each slide is put in reading order: title, subtitle, content, then date, footer and slide number. A real title placeholder, or a shape named "title", is used when there is one; otherwise [title_detection.py](title_detection.py) picks the likely title from its size, position and wording. Running it again changes nothing.
 4. Every picture without usable alt text is described by the vision model, using the slide's text as context.
 5. Language, missing titles, contrast, font size and link text are checked, and the language is set if one was chosen.
 6. The fixed file and the scored report are written to `processed/`.
