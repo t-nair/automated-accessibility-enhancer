@@ -54,6 +54,10 @@ Every file gets a report that opens with a score out of 100 for the file **as it
 Accessibility score: 77/100 (as uploaded)
 Issues by severity: 1 critical, 2 serious, 1 moderate, 1 minor
 
+ Changes made (2):
+ - Slide 2, reading order - before: Content Placeholder 2, Title 1, after: Title 1, Content Placeholder 2
+ - Slide 3, Shape: Picture 3 - alt text before: 'IMG_0412.png', after: 'A bar chart comparing LED and incandescent efficiency.'
+
  Shape: Picture 3
  - Alt Text: A bar chart comparing LED and incandescent efficiency.
  - [critical] The image had no real description, so this one was generated. Check it (WCAG 1.1.1).
@@ -65,6 +69,8 @@ Issues by severity: 1 critical, 2 serious, 1 moderate, 1 minor
  [serious] Text with too little contrast (WCAG 1.4.3):
  - Slide 5, Shape: Subtitle - 2.31:1, needs 4.5:1: 'Week 3 overview'
 ```
+
+Under the score, **Changes made** lists every change written into the fixed file (reading order, descriptions, table header rows, language) by slide, with the value before and after, so a reviewer can check each one.
 
 A critical problem costs 10 points, serious 5, moderate 2 and minor 1. Problems the tool fixed still count, so the score describes the original.
 
@@ -151,7 +157,7 @@ This writes a tagged PDF, an HTML companion and a JSON manifest. PDFs with image
 3. Each slide is put in reading order: title, subtitle, content, then date, footer and slide number. A real title placeholder, or a shape named "title", is used when there is one; otherwise [title_detection.py](title_detection.py) picks the likely title from its size, position and wording. Running it again changes nothing.
 4. Every picture without usable alt text is described by the vision model, using the slide's text as context.
 5. Language, missing titles, contrast, font size and link text are checked, and the language is set if one was chosen.
-6. The fixed file and the scored report are written to `processed/`.
+6. The fixed file and the scored report, with every change listed before and after, are written to `processed/`.
 
 ---
 
