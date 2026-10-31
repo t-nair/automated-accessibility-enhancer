@@ -149,9 +149,15 @@ const all = axe.getRules().map(r => r.ruleId);         // adds AAA and experimen
 console.log((await axe.run(document, { runOnly: { type: "rule", values: all } })).violations);
 ```
 
-The four submission statuses need rows in the database. Stop the app first, or the background
-worker will move the row on again, then:
+The four submission statuses need rows in the database. Upload a file and wait for its job to
+finish, then, with the app still running, set that row to the status you want to audit:
 
 ```
 sqlite3 data/submissions.db "UPDATE submissions SET status = 'processing' WHERE id = '<id>'"
 ```
+
+The background worker only takes jobs from its in-memory queue and never reads the table, so the
+row stays in that status across page loads. Don't stop and restart the app: at startup,
+`recover_unfinished_submissions()` sends every `queued` or `processing` row through the pipeline
+again (or marks it `error` if its original upload is gone). After any restart, set the audit
+statuses again.
