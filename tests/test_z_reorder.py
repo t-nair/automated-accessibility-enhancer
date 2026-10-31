@@ -1309,13 +1309,16 @@ def test_a_table_that_already_has_a_header_row_is_left_alone():
     assert z_reorder.fix_table_headers(slide) == ([], [], [])
 
 
-def test_merged_cells_are_reported():
+def test_merged_cells_are_reported_and_the_header_row_is_still_fixed():
+    # two separate problems: merged cells do not stop the header row being marked
     prs = Presentation()
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    table = add_table(slide, [["Week", "Topic"], ["1", "Intro"], ["2", "Methods"]], first_row=True)
+    table = add_table(slide, [["Week", "Topic"], ["1", "Intro"], ["2", "Methods"]])
     table.table.cell(1, 0).merge(table.table.cell(2, 0))
 
-    assert z_reorder.fix_table_headers(slide) == ([], [], [table.name])
+    assert z_reorder.fix_table_headers(slide) == ([table.name], [], [table.name])
+    assert table.table.first_row
+    assert table.table.cell(1, 0).is_merge_origin
 
 
 def test_table_headers_are_reported_and_a_second_run_changes_nothing(folders, fake_captions):
