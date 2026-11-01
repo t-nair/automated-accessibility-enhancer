@@ -175,6 +175,8 @@ python -m pytest tests/ -q
 
 About 200 tests cover title detection, every report check, whole-folder runs, every page, route and error of the web app, CSRF, restart recovery, and the PDF and OCR pipeline. The vision model is replaced with a stand-in, so they run in seconds and never download it. The sample decks in `Error Test PPTX/` are rebuilt by [generate_test_pptx.py](generate_test_pptx.py) at the start of each run.
 
+[tests/test_axe.py](tests/test_axe.py) loads every page and state from [docs/accessibility-audit.md](docs/accessibility-audit.md) in headless Chromium and fails on any axe-core violation. It needs Chromium once (`python -m playwright install chromium`) and downloads axe-core from cdnjs; without Playwright it is skipped locally, never in CI.
+
 GitHub Actions runs them on every pull request and push to `main` ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
 
 ---
