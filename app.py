@@ -12,18 +12,30 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, jsonify, session
 from werkzeug.utils import secure_filename
-from werkzeug.middleware.proxy_fix import ProxyFix
 from z_reorder import process_one_file, severity_summary
 
 app = Flask(__name__)
 
-# The project site serves this app at accessibilityenhancer.com/app, and its proxy
-# sends X-Forwarded-Prefix: /app. Honoring it makes url_for() emit /app/... so the
-# stylesheet, nav links and upload form resolve. Direct .onrender.com traffic sends no
-# such header and is unaffected.
-# ponytail: trusts the header from any caller, which is fine while a wrong prefix only
-# mis-builds links in that same response. Pin it to the proxy if that stops being true.
-app.wsgi_app = ProxyFix(app.wsgi_app, x_prefix=1)
+# The project site serves this app at accessibilityenhancer.com/app and says so with
+# X-Forwarded-Prefix, which makes url_for() build /app/... links so the stylesheet, nav
+# and upload form resolve instead of being answered by the landing site.
+PROXY_PREFIX = "/app"
+
+
+# Only PROXY_PREFIX is honored. Render is reachable directly, so anyone can send this
+# header; accepting whatever it says would let a caller choose the prefix every link on
+# the page is built under. Accepting one known value makes that pointless, and leaves
+# direct .onrender.com traffic serving itself at the root as before.
+def _mount_under_known_prefix(wsgi_app):
+    def wrapper(environ, start_response):
+        if environ.get("HTTP_X_FORWARDED_PREFIX") == PROXY_PREFIX:
+            environ["SCRIPT_NAME"] = PROXY_PREFIX
+        return wsgi_app(environ, start_response)
+
+    return wrapper
+
+
+app.wsgi_app = _mount_under_known_prefix(app.wsgi_app)
 
 UPLOAD_FOLDER = "uploads"
 PROCESSED_FOLDER = "processed"
