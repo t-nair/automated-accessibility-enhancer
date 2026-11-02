@@ -16,6 +16,27 @@ from z_reorder import process_one_file, severity_summary
 
 app = Flask(__name__)
 
+# The project site serves this app at accessibilityenhancer.com/app and says so with
+# X-Forwarded-Prefix, which makes url_for() build /app/... links so the stylesheet, nav
+# and upload form resolve instead of being answered by the landing site.
+PROXY_PREFIX = "/app"
+
+
+# Only PROXY_PREFIX is honored. Render is reachable directly, so anyone can send this
+# header; accepting whatever it says would let a caller choose the prefix every link on
+# the page is built under. Accepting one known value makes that pointless, and leaves
+# direct .onrender.com traffic serving itself at the root as before.
+def _mount_under_known_prefix(wsgi_app):
+    def wrapper(environ, start_response):
+        if environ.get("HTTP_X_FORWARDED_PREFIX") == PROXY_PREFIX:
+            environ["SCRIPT_NAME"] = PROXY_PREFIX
+        return wsgi_app(environ, start_response)
+
+    return wrapper
+
+
+app.wsgi_app = _mount_under_known_prefix(app.wsgi_app)
+
 UPLOAD_FOLDER = "uploads"
 PROCESSED_FOLDER = "processed"
 DATA_FOLDER = "data"
