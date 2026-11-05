@@ -127,11 +127,16 @@ def mark_stuck(submission):
     message = "This file was being worked on for longer than we allow, so it was stopped."
     steps = ["Upload the presentation again.", "If it fails again, save it from PowerPoint first and upload that copy."]
 
-    update_submission(submission["id"], {
-        "status": "error",
-        "error_message": message,
-        "error_steps": steps,
-    })
+    # this runs while a page is being read, so a table problem must not turn the
+    # page into a 500. The row still says processing, so the next look tries again.
+    try:
+        update_submission(submission["id"], {
+            "status": "error",
+            "error_message": message,
+            "error_steps": steps,
+        })
+    except Exception as e:
+        logging.warning(f"Could not mark submission {submission['id']} as failed in the table. Error: {e}")
 
     submission["status"] = "error"
     submission["error_message"] = message

@@ -97,6 +97,20 @@ def test_a_run_that_died_is_marked_as_failed(table):
     assert len(table.updates) == 1
 
 
+def test_a_table_problem_while_marking_a_dead_run_does_not_break_the_page(monkeypatch):
+    class BrokenTable(FakeTable):
+        def update_item(self, **arguments):
+            raise RuntimeError("DynamoDB is unavailable")
+
+    monkeypatch.setattr(storage_aws, "get_table", lambda: BrokenTable())
+    long_ago = int(time.time()) - storage_aws.STUCK_AFTER_SECONDS - 60
+
+    submission = storage_aws.item_to_submission(a_row(status="processing", started_at=long_ago))
+
+    assert submission["status"] == "error"
+    assert "longer than we allow" in submission["error_message"]
+
+
 def test_a_field_set_to_nothing_is_removed_rather_than_stored(table):
     storage_aws.update_submission("abc12345", {"status": "done", "error_message": None})
 
