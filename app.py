@@ -1,18 +1,28 @@
 import os
 import json
+import time
 import uuid
 import queue
-import sqlite3
 import logging
-import time
-import shutil
 import secrets
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
 from werkzeug.utils import secure_filename
 from z_reorder import process_one_file, severity_summary
+
+# Where submissions and their files are kept. On AWS that is S3 and DynamoDB, and
+# the pipeline runs in Lambda; on a laptop it is folders and a sqlite file, and the
+# pipeline runs in a thread here. SUBMISSIONS_TABLE is only set on AWS.
+if os.environ.get("SUBMISSIONS_TABLE"):
+    import storage_aws as storage
+else:
+    import storage_local as storage
+
+# on AWS the deck is processed by Lambda, which S3 starts on its own, so there is
+# no queue and no worker thread in the web server
+RUNS_PIPELINE_HERE = not os.environ.get("SUBMISSIONS_TABLE")
 
 app = Flask(__name__)
 
@@ -37,13 +47,14 @@ def _mount_under_known_prefix(wsgi_app):
 
 app.wsgi_app = _mount_under_known_prefix(app.wsgi_app)
 
-UPLOAD_FOLDER = "uploads"
-PROCESSED_FOLDER = "processed"
-DATA_FOLDER = "data"
-DATABASE_FILE = "data/submissions.db"
-SECRET_KEY_FILE = "data/secret_key.txt"
 ALLOWED_EXTENSIONS = (".pptx", ".ppt", ".pdf")
 MAX_FILE_SIZE_MB = 50
+
+# several files can be sent at once, so the whole request is allowed to be larger than
+# one file. Anything past this is refused before it reaches the disk.
+MAX_REQUEST_SIZE_MB = 250
+
+SECONDS_IN_A_DAY = 24 * 60 * 60
 
 # the languages offered on the upload form, as the code written into the deck and the
 # name people see. Leaving it blank keeps whatever language each file already has.
@@ -58,243 +69,32 @@ LANGUAGES = {
     "ko-KR": "Korean",
 }
 
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-
 # FLASK_-prefixed environment variables set Flask settings, e.g. FLASK_SESSION_COOKIE_SECURE=true behind HTTPS
 app.config.from_prefixed_env()
 
-# these folders are not stored in git, so make sure they exist on a fresh copy
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(PROCESSED_FOLDER, exist_ok=True)
-os.makedirs(DATA_FOLDER, exist_ok=True)
+app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_SIZE_MB * 1024 * 1024
 
-# how far along each file being processed right now is. This is only kept in memory,
-# because it is not worth saving to disk once the file is finished.
+storage.setup()
+
+# how far along each file being processed right now is. Only used when the pipeline
+# runs here, because it is not worth saving to disk once the file is finished. On AWS
+# the Lambda writes its progress to the table instead.
 processing_progress = {}
 
 # files wait here to be processed. One worker takes them one at a time, so several
-# uploads can never load the captioning model at once and run the GPU out of memory.
+# uploads can never load the pipeline at once.
 work_queue = queue.Queue()
 
-
-# the key that signs the cookie has to stay the same between restarts, or everyone
-# loses track of the files they submitted
-def get_secret_key():
-    from_environment = os.environ.get("SECRET_KEY")
-
-    if from_environment:
-        return from_environment
-
-    if os.path.exists(SECRET_KEY_FILE):
-        with open(SECRET_KEY_FILE, "r") as f:
-            return f.read().strip()
-
-    new_key = uuid.uuid4().hex + uuid.uuid4().hex
-
-    with open(SECRET_KEY_FILE, "w") as f:
-        f.write(new_key)
-
-    return new_key
-
-
-app.secret_key = get_secret_key()
+app.secret_key = storage.get_secret_key()
 app.permanent_session_lifetime = timedelta(days=30)
-
-
-def get_connection():
-    # a new connection each time, because the background worker runs on its own
-    # thread and sqlite connections cannot be shared between threads
-    connection = sqlite3.connect(DATABASE_FILE)
-    connection.row_factory = sqlite3.Row
-
-    return connection
-
-
-def setup_database():
-    connection = get_connection()
-    connection.execute("""
-        CREATE TABLE IF NOT EXISTS submissions (
-            id TEXT PRIMARY KEY,
-            owner_id TEXT,
-            original_filename TEXT,
-            saved_filename TEXT,
-            status TEXT,
-            alt_text_filename TEXT,
-            error_message TEXT,
-            error_steps TEXT,
-            retry_count INTEGER,
-            submitted_at TEXT,
-            language TEXT
-        )
-    """)
-
-    # databases made before the language option have no such column
-    columns = [row["name"] for row in connection.execute("PRAGMA table_info(submissions)")]
-
-    if "language" not in columns:
-        connection.execute("ALTER TABLE submissions ADD COLUMN language TEXT")
-
-    connection.commit()
-    connection.close()
-
-
-# the pages expect a dictionary, and the steps are stored as one piece of text
-def row_to_submission(row):
-    submission = dict(row)
-
-    if submission["error_steps"]:
-        submission["error_steps"] = json.loads(submission["error_steps"])
-    else:
-        submission["error_steps"] = None
-
-    return submission
-
-
-def add_submission(submission):
-    connection = get_connection()
-    connection.execute("""
-        INSERT INTO submissions
-        (id, owner_id, original_filename, saved_filename, status,
-         alt_text_filename, error_message, error_steps, retry_count, submitted_at, language)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        submission["id"],
-        submission["owner_id"],
-        submission["original_filename"],
-        submission["saved_filename"],
-        submission["status"],
-        submission["alt_text_filename"],
-        submission["error_message"],
-        json.dumps(submission["error_steps"]) if submission["error_steps"] else None,
-        submission["retry_count"],
-        submission["submitted_at"],
-        submission.get("language"),
-    ))
-    connection.commit()
-    connection.close()
-
-
-def get_submission(submission_id):
-    connection = get_connection()
-    row = connection.execute("SELECT * FROM submissions WHERE id = ?", (submission_id,)).fetchone()
-    connection.close()
-
-    if row is None:
-        return None
-
-    return row_to_submission(row)
-
-
-def get_submissions_for_owner(owner_id):
-    connection = get_connection()
-    rows = connection.execute(
-        "SELECT * FROM submissions WHERE owner_id = ? ORDER BY submitted_at DESC, rowid DESC",
-        (owner_id,)
-    ).fetchall()
-    connection.close()
-
-    submissions = []
-
-    for row in rows:
-        submissions.append(row_to_submission(row))
-
-    return submissions
-
-
-def delete_submission(submission_id):
-    connection = get_connection()
-    connection.execute("DELETE FROM submissions WHERE id = ?", (submission_id,))
-    connection.commit()
-    connection.close()
-
-
-def delete_submission_files(submission):
-    saved_name = submission["saved_filename"]
-    name_without_extension = os.path.splitext(saved_name)[0]
-
-    paths = [
-        os.path.join(UPLOAD_FOLDER, saved_name),
-        os.path.join(PROCESSED_FOLDER, saved_name),
-        os.path.join(PROCESSED_FOLDER, name_without_extension + "_updated.pptx"),
-        os.path.join(PROCESSED_FOLDER, name_without_extension + "_alt_text"),
-    ]
-
-    for path in paths:
-        if not os.path.exists(path):
-            continue
-
-        try:
-            os.remove(path)
-        except OSError as e:
-            logging.warning(f"Could not delete {path}. Error: {e}")
-
-    # a PDF's results are a whole folder (HTML, PDF, manifest, image review)
-    pdf_folder = pdf_output_folder(saved_name)
-
-    if os.path.exists(pdf_folder):
-        shutil.rmtree(pdf_folder, ignore_errors=True)
 
 
 def is_pdf(filename):
     return filename.lower().endswith(".pdf")
 
 
-def pdf_output_folder(saved_name):
-    return os.path.join(PROCESSED_FOLDER, os.path.splitext(saved_name)[0] + "_pdf")
-
-
-# the folder holding the original upload, or None if it is gone. Older versions moved
-# it into the processed folder once it was done, so look there too.
-def original_upload_folder(saved_name):
-    for folder in (UPLOAD_FOLDER, PROCESSED_FOLDER):
-        if os.path.exists(os.path.join(folder, saved_name)):
-            return folder
-
-    return None
-
-
 ORIGINAL_GONE_MESSAGE = "The original upload is no longer available for retry."
 ORIGINAL_GONE_STEPS = ["Go back to the submit page and upload the presentation again."]
-
-
-# where the finished file is kept, and the name it is downloaded as
-def processed_file_for(submission):
-    saved_stem = os.path.splitext(submission["saved_filename"])[0]
-    original_stem = os.path.splitext(submission["original_filename"])[0]
-
-    if is_pdf(submission["saved_filename"]):
-        return pdf_output_folder(submission["saved_filename"]), saved_stem + ".accessible.pdf", "accessible_" + original_stem + ".pdf"
-
-    # the result is always a .pptx, even when an old .ppt was uploaded
-    return PROCESSED_FOLDER, saved_stem + "_updated.pptx", "accessible_" + original_stem + ".pptx"
-
-
-# changes is a dictionary of column names and their new values
-def update_submission(submission_id, changes):
-    if not changes:
-        return
-
-    if "error_steps" in changes:
-        steps = changes["error_steps"]
-        changes = dict(changes)
-        changes["error_steps"] = json.dumps(steps) if steps else None
-
-    assignments = []
-    values = []
-
-    for column, value in changes.items():
-        assignments.append(column + " = ?")
-        values.append(value)
-
-    values.append(submission_id)
-
-    connection = get_connection()
-    connection.execute("UPDATE submissions SET " + ", ".join(assignments) + " WHERE id = ?", values)
-    connection.commit()
-    connection.close()
-
-
-setup_database()
 
 
 # each browser gets a random id in a cookie, which is how one person's list of files
@@ -310,7 +110,7 @@ def get_owner_id():
 # returns nothing if the submission belongs to someone else, so the pages treat it
 # the same as one that does not exist
 def get_my_submission(submission_id):
-    submission = get_submission(submission_id)
+    submission = storage.get_submission(submission_id)
 
     if submission is None:
         return None
@@ -331,7 +131,7 @@ def file_is_too_big(file):
 
 
 def set_submission_status(submission_id, new_status):
-    update_submission(submission_id, {"status": new_status})
+    storage.update_submission(submission_id, {"status": new_status})
 
 
 def process_one_submission(submission_id, saved_name):
@@ -344,9 +144,9 @@ def process_one_submission(submission_id, saved_name):
     set_submission_status(submission_id, "processing")
 
     # read from the database so a retry sets the same language as the first attempt
-    submission = get_submission(submission_id)
+    submission = storage.get_submission(submission_id)
     language = submission["language"]
-    input_folder = original_upload_folder(saved_name)
+    input_folder = storage.original_upload_folder(saved_name)
 
     if input_folder is None:
         was_successful, error_message, error_steps = False, ORIGINAL_GONE_MESSAGE, ORIGINAL_GONE_STEPS
@@ -356,7 +156,7 @@ def process_one_submission(submission_id, saved_name):
         )
     else:
         was_successful, error_message, error_steps = process_one_file(
-            saved_name, input_folder, PROCESSED_FOLDER, update_progress, language
+            saved_name, input_folder, storage.PROCESSED_FOLDER, update_progress, language
         )
 
     if not was_successful:
@@ -369,7 +169,7 @@ def process_one_submission(submission_id, saved_name):
     else:
         alt_text_filename = None
 
-    update_submission(submission_id, {
+    storage.update_submission(submission_id, {
         "status": "done" if was_successful else "error",
         "error_message": error_message,
         "error_steps": error_steps,
@@ -404,7 +204,7 @@ def process_one_pdf(saved_name, input_folder, original_filename, progress_callba
             progress_callback(len(finished_stages), len(PDF_STAGES))
 
     stem = os.path.splitext(saved_name)[0]
-    output_folder = Path(pdf_output_folder(saved_name))
+    output_folder = Path(storage.pdf_output_folder(saved_name))
 
     try:
         manifest = remediate_pdf(
@@ -415,7 +215,7 @@ def process_one_pdf(saved_name, input_folder, original_filename, progress_callba
         logging.exception(f"PDF remediation of {saved_name} stopped. Error: {e}")
         return pdf_error_details(output_folder / (stem + ".remediation.json"), e)
 
-    report_path = os.path.join(PROCESSED_FOLDER, stem + "_alt_text")
+    report_path = os.path.join(storage.PROCESSED_FOLDER, stem + "_alt_text")
 
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(pdf_report_text(original_filename, manifest))
@@ -496,6 +296,8 @@ def pdf_report_text(original_filename, manifest):
 
 
 def worker_loop():
+    last_cleanup = time.time()
+
     while True:
         submission_id, saved_name = work_queue.get()
 
@@ -507,7 +309,7 @@ def worker_loop():
             processing_progress.pop(submission_id, None)
 
             # without a message the page would show an error with no explanation
-            update_submission(submission_id, {
+            storage.update_submission(submission_id, {
                 "status": "error",
                 "error_message": "Something unexpected went wrong while processing this file.",
                 "error_steps": ["Please try again. If it keeps failing, contact the accessibility team."],
@@ -515,29 +317,58 @@ def worker_loop():
 
         work_queue.task_done()
 
+        # tidy up old files roughly once a day, so a server left running for months
+        # does not slowly fill its disk
+        if time.time() - last_cleanup > SECONDS_IN_A_DAY:
+            last_cleanup = time.time()
 
-# daemon means this thread does not keep the app running when it is shut down
-worker_thread = threading.Thread(target=worker_loop, daemon=True)
-worker_thread.start()
+            try:
+                storage.delete_old_submissions()
+            except Exception as e:
+                logging.error(f"Could not tidy up old submissions. Error: {e}")
+
+
+if RUNS_PIPELINE_HERE:
+    # daemon means this thread does not keep the app running when it is shut down
+    worker_thread = threading.Thread(target=worker_loop, daemon=True)
+    worker_thread.start()
 
 
 def start_processing(submission_id, saved_name):
-    work_queue.put((submission_id, saved_name))
+    if RUNS_PIPELINE_HERE:
+        work_queue.put((submission_id, saved_name))
+        return
+
+    # on AWS, putting the deck in the uploads bucket is what starts the pipeline,
+    # so by the time we get here it is already on its way
+    logging.info(f"Submission {submission_id} ({saved_name}) handed to the pipeline by S3.")
+
+
+def restart_processing(submission_id, saved_name):
+    if RUNS_PIPELINE_HERE:
+        work_queue.put((submission_id, saved_name))
+        return
+
+    storage.restart_processing(saved_name)
+
+
+# Flask refuses an oversized upload before our own checks get a chance to run,
+# so this turns its error page into the same kind of message as everything else
+@app.errorhandler(413)
+def upload_was_too_large(error):
+    logging.warning("Upload rejected: the request was larger than the limit.")
+    flash(f"That upload was too large. Each file must be under {MAX_FILE_SIZE_MB} MB, and everything sent at once must be under {MAX_REQUEST_SIZE_MB} MB.")
+
+    return redirect(url_for("home"))
 
 
 # the queue only lives in memory, so anything waiting or half done when the app
 # stopped is queued again, or marked as an error if its original is gone
 def recover_unfinished_submissions():
-    connection = get_connection()
-    rows = connection.execute(
-        "SELECT id, saved_filename FROM submissions WHERE status IN ('queued', 'processing') ORDER BY rowid"
-    ).fetchall()
-    connection.close()
-
-    for row in rows:
-        if original_upload_folder(row["saved_filename"]) is None:
+    for row in storage.unfinished_submissions():
+        if not storage.upload_exists(row["saved_filename"]):
             logging.error(f"Submission {row['id']} could not be resumed after a restart: {row['saved_filename']} is gone.")
-            update_submission(row["id"], {
+            storage.update_submission(row["id"], {
                 "status": "error",
                 "error_message": ORIGINAL_GONE_MESSAGE,
                 "error_steps": ORIGINAL_GONE_STEPS,
@@ -590,21 +421,24 @@ def save_one_upload(uploaded_file, language=None):
         logging.warning(f"Upload rejected: {filename} is not a .pptx, .ppt or .pdf file.")
         return None, f"{filename}: only .pptx, .ppt and .pdf files are accepted."
 
+    if is_pdf(filename) and not RUNS_PIPELINE_HERE:
+        logging.warning(f"Upload rejected: {filename} is a PDF, and PDFs are not processed on this deployment.")
+        return None, f"{filename}: PDFs are not supported on this server yet, only .pptx and .ppt files."
+
     if file_is_too_big(uploaded_file):
         logging.warning(f"Upload rejected: {filename} is over the {MAX_FILE_SIZE_MB}MB size limit.")
         return None, f"{filename}: too large (the limit is {MAX_FILE_SIZE_MB} MB)."
 
     submission_id = str(uuid.uuid4())[:8]
     saved_name = submission_id + "_" + secure_filename(filename)
-    save_path = os.path.join(app.config["UPLOAD_FOLDER"], saved_name)
 
     try:
-        uploaded_file.save(save_path)
-    except OSError as e:
-        logging.error(f"Could not save uploaded file {filename} to {save_path}. Error: {e}")
+        storage.save_upload(uploaded_file, saved_name)
+    except Exception as e:
+        logging.error(f"Could not save uploaded file {filename} as {saved_name}. Error: {e}")
         return None, f"{filename}: we could not save it. Please try again."
 
-    add_submission({
+    storage.add_submission({
         "id": submission_id,
         "owner_id": get_owner_id(),
         "original_filename": filename,
@@ -677,7 +511,7 @@ def upload():
 @app.route("/status")
 def status():
     # already newest first, and only the files this visitor sent in
-    submissions = get_submissions_for_owner(get_owner_id())
+    submissions = storage.get_submissions_for_owner(get_owner_id())
 
     return render_template("status.html", submissions=submissions)
 
@@ -694,13 +528,12 @@ def details(submission_id):
     report_text = "No report is available for this submission."
 
     if matching_submission.get("alt_text_filename"):
-        report_path = os.path.join(PROCESSED_FOLDER, matching_submission["alt_text_filename"])
+        saved_report = storage.read_report(matching_submission)
 
-        if os.path.exists(report_path):
-            with open(report_path, "r", encoding="utf-8") as f:
-                report_text = f.read()
+        if saved_report is not None:
+            report_text = saved_report
         else:
-            logging.error(f"Details page for submission {submission_id} expected a report at {report_path}, but it's missing.")
+            logging.error(f"Details page for submission {submission_id} expected a report, but it could not be read.")
 
     return render_template("details.html", submission=matching_submission, report_text=report_text)
 
@@ -712,12 +545,18 @@ def progress(submission_id):
     if matching_submission is None:
         return jsonify({"status": "unknown", "done": 0, "total": 0})
 
-    counts = processing_progress.get(submission_id, {})
+    if RUNS_PIPELINE_HERE:
+        counts = processing_progress.get(submission_id, {})
+        done = counts.get("done", 0)
+        total = counts.get("total", 0)
+    else:
+        done = int(matching_submission.get("captions_done") or 0)
+        total = int(matching_submission.get("captions_total") or 0)
 
     return jsonify({
         "status": matching_submission["status"],
-        "done": counts.get("done", 0),
-        "total": counts.get("total", 0)
+        "done": done,
+        "total": total
     })
 
 
@@ -734,9 +573,9 @@ def retry_submission(submission_id):
         return redirect(url_for("details", submission_id=submission_id))
 
     filename = submission["saved_filename"]
-    if original_upload_folder(filename) is None:
-        logging.error(f"Retry of submission {submission_id} impossible: {filename} is gone from {UPLOAD_FOLDER}.")
-        update_submission(submission_id, {
+    if not storage.upload_exists(filename):
+        logging.error(f"Retry of submission {submission_id} impossible: the original {filename} is gone.")
+        storage.update_submission(submission_id, {
             "error_message": ORIGINAL_GONE_MESSAGE,
             "error_steps": ORIGINAL_GONE_STEPS,
         })
@@ -744,10 +583,10 @@ def retry_submission(submission_id):
         return redirect(url_for("details", submission_id=submission_id))
 
     retry_count = submission["retry_count"] + 1
-    update_submission(submission_id, {"retry_count": retry_count, "status": "queued"})
+    storage.update_submission(submission_id, {"retry_count": retry_count, "status": "queued"})
 
     logging.info(f"Manual retry started for submission {submission_id} ({filename}), attempt {retry_count}.")
-    start_processing(submission_id, filename)
+    restart_processing(submission_id, filename)
 
     return redirect(url_for("details", submission_id=submission_id))
 
@@ -765,8 +604,8 @@ def delete(submission_id):
         flash("That file is still being worked on. Wait until it finishes, then delete it.")
         return redirect(url_for("details", submission_id=submission_id))
 
-    delete_submission_files(submission)
-    delete_submission(submission_id)
+    storage.delete_submission_files(submission)
+    storage.delete_submission(submission_id)
 
     logging.info(f"Submission {submission_id} ({submission['original_filename']}) was deleted by the person who sent it.")
     flash(f"Deleted {submission['original_filename']}.")
@@ -788,22 +627,14 @@ def download(submission_id):
         flash("That file isn't ready to download. It either failed processing or hasn't finished yet.")
         return redirect(url_for("details", submission_id=submission_id))
 
-    processed_folder, processed_filename, download_name = processed_file_for(matching_submission)
-
-    processed_path = os.path.join(processed_folder, processed_filename)
-    if not os.path.exists(processed_path):
-        logging.error(f"Download requested for submission {submission_id}, but {processed_path} is missing on disk.")
+    if not storage.processed_file_is_ready(matching_submission):
+        logging.error(f"Download requested for submission {submission_id}, but the processed file is missing.")
         flash("We couldn't find the processed file. Please try submitting it again.")
         return redirect(url_for("details", submission_id=submission_id))
 
-    logging.info(f"Download of submission {submission_id} as {download_name}.")
+    logging.info(f"Download of submission {submission_id}.")
 
-    return send_from_directory(
-        processed_folder,
-        processed_filename,
-        as_attachment=True,
-        download_name=download_name
-    )
+    return storage.send_processed_file(matching_submission)
 
 
 if __name__ == "__main__":
@@ -811,6 +642,6 @@ if __name__ == "__main__":
 
     recover_unfinished_submissions()
 
-    # one process with threads, never several processes: the queue, the progress and the
-    # captioning model all live in this process (see docs/deployment.md)
+    # one process with threads, never several processes: the queue and the progress
+    # live in this process (see docs/deployment.md)
     serve(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5000)))

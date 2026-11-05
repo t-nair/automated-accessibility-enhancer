@@ -4,7 +4,7 @@
 
 Upload a PowerPoint or a PDF, get back a more accessible file and a report that says what was wrong with it.
 
-The Accessibility Enhancer fixes what it safely can (slide reading order, missing image descriptions, document language, PDF tags) and lists everything else a person needs to look at, scored by severity and mapped to WCAG 2.1. Everything runs on your own machine or server: no course file or image is sent to an outside service.
+The Accessibility Enhancer fixes what it safely can (slide reading order, missing image descriptions, document language, PDF tags) and lists everything else a person needs to look at, scored by severity and mapped to WCAG 2.1. Everything runs on your own machine or server, except image descriptions: each picture that needs one is sent to Claude on Amazon Bedrock.
 
 It was built as part of the **University of Washington Advancing Accessibility for Engineering Education** initiative, under the guidance of **Prof. Anant** and **Dr. Lalitha Subramanian**, and presented at **EDUCAUSE 2025 Online** as part of a broader effort to scale accessibility remediation in instructional materials.
 
@@ -33,7 +33,7 @@ It was built as part of the **University of Washington Advancing Accessibility f
 | Check | WCAG 2.1 | What happens |
 |---|---|---|
 | Reading order | 1.3.2 | **Fixed** by role: the title first, then the subtitle, then the content in the author's order, then the date, footer and slide number. Titles typed into a text box are found by a small trained model ([title_research/](title_research/README.md)). A shape that sits above another but is read after it is reported. |
-| Images with no description | 1.1.1 | **Fixed.** A local vision model writes a description into the file. A filename (`photo.png`) or a generic name (`Picture 3`) counts as missing. Descriptions a person wrote are never overwritten. |
+| Images with no description | 1.1.1 | **Fixed.** Claude on Amazon Bedrock writes a description into the file. A filename (`photo.png`) or a generic name (`Picture 3`) counts as missing. Descriptions a person wrote are never overwritten. |
 | Presentation language | 3.1.1, 3.1.2 | **Fixed** when you pick a language on upload: set across every slide, master and layout. A missing, invalid or mixed language is always reported. |
 | Slides with no title | 2.4.2 | Reported, by slide. |
 | Low text contrast | 1.4.3 | Reported, with each ratio. Colours are resolved through the theme, the shape fill and the slide, layout and master backgrounds. |
@@ -94,11 +94,10 @@ The app itself has been audited with axe-core on every page and state: **no WCAG
 
 ## Quick start
 
-You need **Python 3.11 or 3.12**. Optional extras:
+You need **Python 3.11 or 3.12**, and AWS credentials that can call Bedrock in `us-east-1` for image descriptions. Optional extras:
 
 | Optional | For |
 |---|---|
-| An NVIDIA GPU | Image descriptions about five times faster. Without one it works, just slower |
 | LibreOffice | Old `.ppt` files. `.pptx` works without it |
 | Chrome, Chromium or Edge | PDF uploads (set `PDF_PIPELINE_CHROME` if it is not found) |
 
@@ -107,19 +106,13 @@ git clone https://github.com/t-nair/automated-accessibility-enhancer.git
 cd automated-accessibility-enhancer
 python -m venv .venv
 .venv\Scripts\Activate.ps1          # macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-web.txt
 python app.py
 ```
 
 Open http://localhost:5000. To use another port, set `PORT` first (`$env:PORT=5001` in PowerShell).
 
-The first image description downloads the model (`Qwen/Qwen2-VL-2B-Instruct`, about 4.4 GB), which is then cached. PyTorch itself is about 2.5 GB.
-
-**GPU:** install the CUDA build of PyTorch from pytorch.org before `requirements.txt`, then check:
-
-```bash
-python -c "import torch; print(torch.cuda.is_available())"
-```
+**Image descriptions** use the usual AWS credentials (`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, or a profile). `BEDROCK_MODEL_ID` picks the model and `BEDROCK_REGION` the region (default `us-east-1`). Without credentials, files are still fixed; pictures get a placeholder description that the report flags.
 
 **LibreOffice:** `winget install --id TheDocumentFoundation.LibreOffice` on Windows, `sudo apt install libreoffice-impress` on Linux. Without it, `.ppt` uploads are turned away with a message explaining what to do.
 
@@ -155,7 +148,7 @@ This writes a tagged PDF, an HTML companion and a JSON manifest. PDFs with image
 1. The upload is saved, recorded in SQLite and put on the queue. The original is kept untouched, so retries and restarts can start again from it.
 2. A `.ppt` is converted to `.pptx` with LibreOffice. A `.pdf` goes to the PDF pipeline instead.
 3. Each slide is put in reading order: title, subtitle, content, then date, footer and slide number. A real title placeholder, or a shape named "title", is used when there is one; otherwise [title_detection.py](title_detection.py) picks the likely title from its size, position and wording. Running it again changes nothing.
-4. Every picture without usable alt text is described by the vision model, using the slide's text as context.
+4. Every picture without usable alt text is described by Claude on Bedrock, using the slide's text as context.
 5. Language, missing titles, contrast, font size and link text are checked, and the language is set if one was chosen.
 6. The fixed file and the scored report, with every change listed before and after, are written to `processed/`.
 
@@ -163,17 +156,21 @@ This writes a tagged PDF, an HTML companion and a JSON manifest. PDFs with image
 
 ## Deploying
 
-`python app.py` serves the app with [Waitress](https://docs.pylonsproject.org/projects/waitress/) on Windows or Linux. It must run as **one process**: the queue, the progress and the model live in it. [docs/deployment.md](docs/deployment.md) covers the server it needs, environment variables, where data is kept, a systemd unit, nginx with HTTPS, and the decisions still open (host, sign-in, upload limits, retention).
+`python app.py` serves the app with [Waitress](https://docs.pylonsproject.org/projects/waitress/) on Windows or Linux. It must run as **one process**: the queue and the progress live in it. [docs/deployment.md](docs/deployment.md) covers the server it needs, environment variables, where data is kept, a systemd unit, nginx with HTTPS, and the decisions still open (host, sign-in, upload limits, retention).
+
+- **Render:** [render.yaml](render.yaml) runs the site on Render's free plan with local storage. Set the Bedrock access key in the Render dashboard.
+- **AWS:** [infra/](infra/README.md) has the Terraform for S3, DynamoDB, a Lambda that processes decks and App Runner for the site. When `SUBMISSIONS_TABLE` is set, [app.py](app.py) uses [storage_aws.py](storage_aws.py) and leaves processing to [lambda_handler.py](lambda_handler.py). PDFs are not processed on AWS yet.
 
 ---
 
 ## Tests
 
 ```bash
+pip install -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 
-About 200 tests cover title detection, every report check, whole-folder runs, every page, route and error of the web app, CSRF, restart recovery, and the PDF and OCR pipeline. The vision model is replaced with a stand-in, so they run in seconds and never download it. The sample decks in `Error Test PPTX/` are rebuilt by [generate_test_pptx.py](generate_test_pptx.py) at the start of each run.
+About 200 tests cover title detection, every report check, whole-folder runs, every page, route and error of the web app, CSRF, restart recovery, and the PDF and OCR pipeline. Bedrock is replaced with a stand-in, and S3 and DynamoDB with moto, so they run in seconds without AWS credentials. The sample decks in `Error Test PPTX/` are rebuilt by [generate_test_pptx.py](generate_test_pptx.py) at the start of each run.
 
 [tests/test_axe.py](tests/test_axe.py) loads every page and state from [docs/accessibility-audit.md](docs/accessibility-audit.md) in headless Chromium and fails on any axe-core violation. It needs Chromium once (`python -m playwright install chromium`) and downloads axe-core from cdnjs; without Playwright it is skipped locally, never in CI.
 
@@ -185,6 +182,10 @@ GitHub Actions runs them on every pull request and push to `main` ([.github/work
 
 ```
 app.py                  the web app: uploads, queue, status, reports, downloads
+storage_local.py        submissions in SQLite and folders (a laptop, Render)
+storage_aws.py          submissions in DynamoDB and S3 (AWS)
+lambda_handler.py       runs the PowerPoint pipeline in Lambda on AWS
+infra/                  Terraform for the AWS deployment
 z_reorder.py            the PowerPoint pipeline: conversion, titles, descriptions, every check, the report
 title_detection.py      finds the title of a slide with no title placeholder
 title_model.joblib      the small trained model it uses
@@ -207,7 +208,7 @@ pipeline.log            what happened to every file, including failures
 
 - **Descriptions are a starting point.** The model sometimes gets names and dates wrong, and has invented a label that was not in the picture. Every generated description is flagged in the report so it can be checked before a file reaches students.
 - **There is no login yet.** Each browser gets a random id in a signed cookie, and nobody can open someone else's files, even with the link. But clearing cookies loses your history, and a shared browser shares it. Real use needs university sign-in.
-- **One file at a time.** On purpose: several descriptions at once need more GPU memory than most laptops have.
+- **One file at a time** when the site runs the pipeline itself, so one large upload cannot hold up the server.
 - **"Permission denied" or "in use" errors** usually mean the deck is open in PowerPoint or a OneDrive or Dropbox sync is holding it. Close it or pause syncing and retry.
 - **Small-text cutoff:** set `MIN_FONT_PT` (for example `$env:MIN_FONT_PT=12`) before starting.
 
@@ -220,7 +221,6 @@ pipeline.log            what happened to every file, including failures
 - A host for a shared deployment ([#102](https://github.com/t-nair/automated-accessibility-enhancer/issues/102)), upload limits ([#74](https://github.com/t-nair/automated-accessibility-enhancer/issues/74)) and file retention ([#78](https://github.com/t-nair/automated-accessibility-enhancer/issues/78))
 - Charts, SmartArt, grouped pictures and decorative images ([docs/wcag-coverage.md](docs/wcag-coverage.md))
 - HTML pages ([#41](https://github.com/t-nair/automated-accessibility-enhancer/issues/41))
-- Better descriptions, from a larger or hosted model
 
 Open work is tracked in [issues](https://github.com/t-nair/automated-accessibility-enhancer/issues).
 

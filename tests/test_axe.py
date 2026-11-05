@@ -9,6 +9,7 @@ from werkzeug.serving import make_server
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import app as app_module
+import storage_local as storage_module
 
 # CI must run these, so only a local run without Playwright may skip them
 if not os.environ.get("CI"):
@@ -35,7 +36,7 @@ def add_submission(submission_id, status, **extras):
         "submitted_at": "2026-08-20 10:00",
     }
     submission.update(extras)
-    app_module.add_submission(submission)
+    storage_module.add_submission(submission)
 
 
 # the app on a real port, with one submission in each status. Nothing is ever processed,
@@ -44,12 +45,11 @@ def add_submission(submission_id, status, **extras):
 def base_url(tmp_path_factory):
     folder = tmp_path_factory.mktemp("axe")
     patch = pytest.MonkeyPatch()
-    patch.setattr(app_module, "UPLOAD_FOLDER", str(folder))
-    patch.setattr(app_module, "PROCESSED_FOLDER", str(folder))
-    patch.setattr(app_module, "DATABASE_FILE", str(folder / "submissions.db"))
-    patch.setitem(app_module.app.config, "UPLOAD_FOLDER", str(folder))
+    patch.setattr(storage_module, "UPLOAD_FOLDER", str(folder))
+    patch.setattr(storage_module, "PROCESSED_FOLDER", str(folder))
+    patch.setattr(storage_module, "DATABASE_FILE", str(folder / "submissions.db"))
     patch.setattr(app_module, "start_processing", lambda submission_id, saved_name: None)
-    app_module.setup_database()
+    storage_module.setup()
 
     (folder / "done_report.txt").write_text("Slide 1: added a description to 1 picture.\n", encoding="utf-8")
     add_submission("queued01", "queued")

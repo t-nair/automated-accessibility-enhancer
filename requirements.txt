@@ -1,11 +1,10 @@
-Flask
-waitress
+# The pipeline itself. This is the only file the Lambda image installs, so keep
+# it to what z_reorder.py needs to open a deck and describe its pictures.
+#
+# anthropic[bedrock] brings boto3 and botocore with it, which is what signs the
+# Bedrock requests, so neither is listed separately.
 python-pptx
 Pillow
-torch
-transformers
+anthropic[bedrock]
 # title_model.joblib is a pickled scikit-learn model, so the version must match the one that trained it
 scikit-learn~=1.8.0
-pytest
-playwright
--r pipeline/requirements.txt
