@@ -1,8 +1,11 @@
 # Deploying the web page
 
 The website is served by [Waitress](https://docs.pylonsproject.org/projects/waitress/),
-which runs on Windows and Linux. Everything, including the image descriptions, runs on
-the server itself: no course file or picture is sent to an outside service.
+which runs on Windows and Linux. Everything runs on the server itself except image
+descriptions: each picture that needs one is sent to Claude on Amazon Bedrock.
+
+This guide is for one server you run yourself. For Render, see [render.yaml](../render.yaml);
+for AWS (S3, DynamoDB, Lambda and App Runner), see [infra/README.md](../infra/README.md).
 
 The [open decisions](#open-decisions) at the end still need an owner before this runs
 anywhere real.
@@ -12,9 +15,7 @@ anywhere real.
 ## How the app runs (read this before changing any server setting)
 
 - **One process, one worker thread.** When `app.py` is imported it starts a queue in
-  memory and one background thread that takes files off it one at a time. That thread
-  loads the captioning model (`Qwen/Qwen2-VL-2B-Instruct`, about 4.5 GB in fp16 on a GPU,
-  about 9 GB in fp32 on a CPU) the first time it needs it and keeps it loaded.
+  memory and one background thread that takes files off it one at a time.
 - **Progress is kept in memory** in that same process. The progress bar asks the process
   that handled the upload.
 - **Submissions are in SQLite** (`data/submissions.db`). Each request opens its own
@@ -22,7 +23,7 @@ anywhere real.
 
 So the app must run as **exactly one process**. More processes (Gunicorn `-w 4`, several
 Waitress instances behind a load balancer, several containers) would each start their own
-queue and their own copy of the model: GPU memory runs out, and the progress bar shows 0
+queue, and the progress bar shows 0
 whenever a request lands on a process that is not the one doing the work. Gunicorn's
 `--preload` is worse: the worker thread starts before the fork and does not survive it,
 so nothing is ever processed.
@@ -42,8 +43,8 @@ progress first (see open decisions).
 | Need | Why |
 |------|-----|
 | Python 3.11 or 3.12 | OCR for scanned PDFs (`rapidocr-onnxruntime`) does not support newer versions |
-| An NVIDIA GPU with at least 8 GB, or a lot of patience | On a CPU, describing a deck with many pictures takes minutes per file |
-| About 10 GB of disk for the model, plus room for uploads | See "Where data is kept" |
+| AWS credentials that can call Bedrock in `us-east-1` | Image descriptions. Without them pictures get a placeholder that the report flags |
+| Room for uploads | See "Where data is kept" |
 | LibreOffice (optional) | Only for old `.ppt` files |
 | Chrome, Chromium or Edge | Only for PDF uploads; set `PDF_PIPELINE_CHROME` if it is not on `PATH` |
 | A reverse proxy that handles HTTPS | Waitress does not do TLS |
@@ -56,22 +57,9 @@ progress first (see open decisions).
 git clone https://github.com/t-nair/automated-accessibility-enhancer.git /srv/accessibility-enhancer
 cd /srv/accessibility-enhancer
 python3.12 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -r requirements-web.txt
 .venv/bin/python -m pipeline.setup_models
 ```
-
-For a GPU, install the CUDA build of PyTorch that matches the server's driver (see
-pytorch.org) before `requirements.txt`, or the plain `torch` from PyPI may be CPU-only.
-
-Download the captioning model once, while the server can still reach Hugging Face:
-
-```bash
-HF_HOME=/srv/accessibility-enhancer/hf-cache .venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('Qwen/Qwen2-VL-2B-Instruct')"
-```
-
-After that, set `HF_HUB_OFFLINE=1` (below) so the running app never contacts Hugging Face.
-Without it the model is downloaded on the first upload instead, which makes that first
-person wait several minutes.
 
 ---
 
@@ -81,8 +69,10 @@ person wait several minutes.
 |----------|--------|--------------|
 | `SECRET_KEY` | Yes | Signs the cookie that ties each visitor to their files. Keep it the same across restarts and secret. If unset, one is made and saved in `data/secret_key.txt`. Make one with `python -c "import secrets; print(secrets.token_hex(32))"` |
 | `FLASK_SESSION_COOKIE_SECURE` | Yes, behind HTTPS | Set to `true` so the cookie is only sent over HTTPS |
-| `HF_HOME` | Recommended | Where the model is stored. Default is `~/.cache/huggingface` of the user running the app |
-| `HF_HUB_OFFLINE` | Recommended | Set to `1` after downloading the model, so nothing is fetched at run time |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Yes, for descriptions | A key allowed only to call Bedrock (or any other way boto3 finds credentials) |
+| `BEDROCK_REGION` | No | Where Bedrock is called (default `us-east-1`) |
+| `BEDROCK_MODEL_ID` | No | The model that writes descriptions (default Claude Haiku 4.5) |
+| `LOG_FILE` | No | Where the log is written as well as the console (default `pipeline.log`; empty for console only) |
 | `MIN_FONT_PT` | No | Font size below which text is reported (default `9`) |
 | `PDF_PIPELINE_CHROME` | Only if Chrome is not on `PATH` | Path to Chrome, Chromium or Edge for PDF export |
 | `HOST`, `PORT` | No | Address to listen on (default `127.0.0.1:5000`). Keep `127.0.0.1` behind a proxy on the same machine |
@@ -105,12 +95,12 @@ project folder (`WorkingDirectory=` in systemd). Back up `data/`, `uploads/` and
 | `uploads/` | The original files people uploaded | Yes, retry needs them |
 | `processed/` | Fixed files, reports and PDF output folders | Yes, downloads come from here |
 | `pipeline.log` | Log of every file processed | Yes, rotate it (it is never trimmed) |
-| `$HF_HOME` | The captioning model | Yes, or it is downloaded again |
 | `pipeline/ocr_models/` | OCR model for scanned PDFs | Yes |
 
 These hold course material, so they must be on a disk only the service account can read,
 and they must not be on storage that is wiped on redeploy (a container's own filesystem,
-for example). Nothing is deleted automatically; people delete their own files from the
+for example). Submissions and their files are deleted after 30 days
+(`RETENTION_DAYS` in `storage_local.py`), and people can delete their own sooner from the
 status page.
 
 ---
@@ -128,8 +118,7 @@ The app does not use `X-Forwarded-*` headers (every redirect is relative), so Wa
 needs no trusted-proxy settings.
 
 For the Flask debugger on a laptop, use `flask --app app run --debug --no-reload`, never on
-a server. (The reloader restarts the app in the middle of a file, because loading PyTorch
-touches files it watches.)
+a server. (The reloader restarts the app in the middle of a file.)
 
 ### systemd (Linux)
 
@@ -156,8 +145,8 @@ WantedBy=multi-user.target
 ```ini
 SECRET_KEY=<the generated key>
 FLASK_SESSION_COOKIE_SECURE=true
-HF_HOME=/srv/accessibility-enhancer/hf-cache
-HF_HUB_OFFLINE=1
+AWS_ACCESS_KEY_ID=<the Bedrock-only key>
+AWS_SECRET_ACCESS_KEY=<its secret>
 ```
 
 ```bash
@@ -217,22 +206,19 @@ that asks the person to upload it again.
 
 These are not settled in the code or the repository and need someone to decide:
 
-1. **The host.** No server has been chosen. The `aws-deployment` and
-   `infra/initial-terraform-setup` branches target AWS and Render, but they replace the
-   local model with Claude on Amazon Bedrock, which sends course images off the server.
-   They are not merged and this guide does not use them. Whoever picks a host needs to
-   confirm it may hold course material and has a GPU (or accept CPU speed). (#102)
+1. **The host.** The demo runs on Render's free plan ([render.yaml](../render.yaml)), whose
+   disk is wiped on every restart, and [infra/](../infra/README.md) has an AWS setup. Image
+   descriptions go to Claude on Amazon Bedrock, so course images leave the server either
+   way. Whoever picks the host for real use needs to confirm it, and Bedrock, may hold
+   course material. (#102)
 2. **Domain and certificate.** `accessibility.example.edu` and the certificate paths above
    are placeholders. (#102)
 3. **Who can use it.** There is no login; anyone who can reach the site can upload. Until
    there is university sign-in, keep it on the campus network or VPN, or put sign-in in
    front of it at the proxy. Real sign-in is #77; the interim choice is #102.
-4. **Upload limits.** Each file may be 50 MB (`MAX_FILE_SIZE_MB`), but nothing limits how
-   many files one upload sends; nginx's `client_max_body_size 205m` above is the only cap.
-   Pick a total and enforce it in the app too (#74).
-5. **Keeping files.** Nothing is deleted automatically. Decide how long uploads and results
-   may be kept and whether something should clear them. (#78)
-6. **Model version.** The captioning model is not pinned to a revision, so a fresh
-   download can get a newer one. Pin it, or keep the `HF_HOME` folder backed up. (#103)
-7. **More than one file at a time.** Needs a shared queue and progress outside the process
-   and enough GPU memory for several models. Until then, one process. (#104)
+4. **Upload limits.** Each file may be 50 MB (`MAX_FILE_SIZE_MB`) and one upload 250 MB
+   (`MAX_REQUEST_SIZE_MB`). Raise nginx's `client_max_body_size` to match if that total is
+   kept. (#74)
+5. **Keeping files.** Everything is deleted after 30 days. Confirm that period is right. (#78)
+6. **More than one file at a time.** Needs a shared queue and progress outside the process.
+   Until then, one process. (#104)

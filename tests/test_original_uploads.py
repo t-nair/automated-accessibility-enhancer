@@ -6,6 +6,7 @@ from pptx.presentation import Presentation
 # test_app puts the project folder on the path, so it is imported first
 from test_app import add_submission, client, copy_into  # noqa: F401 (client is a fixture)
 import app as app_module
+import storage_local as storage_module
 import z_reorder
 
 
@@ -20,7 +21,7 @@ def read_bytes(path):
 
 
 def upload_path(submission_id):
-    return os.path.join(app_module.UPLOAD_FOLDER, submission_id + "_Lecture.pptx")
+    return os.path.join(storage_module.UPLOAD_FOLDER, submission_id + "_Lecture.pptx")
 
 
 def test_a_finished_file_keeps_its_original_upload(client, fake_captions):
@@ -30,9 +31,9 @@ def test_a_finished_file_keeps_its_original_upload(client, fake_captions):
 
     app_module.process_one_submission("keep0001", "keep0001_Lecture.pptx")
 
-    assert app_module.get_submission("keep0001")["status"] == "done"
+    assert storage_module.get_submission("keep0001")["status"] == "done"
     assert read_bytes(upload_path("keep0001")) == before
-    assert not os.path.exists(os.path.join(app_module.PROCESSED_FOLDER, "keep0001_Lecture.pptx"))
+    assert not os.path.exists(os.path.join(storage_module.PROCESSED_FOLDER, "keep0001_Lecture.pptx"))
 
 
 def test_a_failed_file_can_be_retried_and_its_original_is_never_changed(client, fake_captions, monkeypatch):
@@ -51,7 +52,7 @@ def test_a_failed_file_can_be_retried_and_its_original_is_never_changed(client, 
     monkeypatch.setattr(Presentation, "save", save)
     app_module.process_one_submission("fail0001", "fail0001_Lecture.pptx")
 
-    assert app_module.get_submission("fail0001")["status"] == "error"
+    assert storage_module.get_submission("fail0001")["status"] == "error"
     assert read_bytes(upload_path("fail0001")) == before
 
     client.post("/retry/fail0001")
@@ -60,13 +61,13 @@ def test_a_failed_file_can_be_retried_and_its_original_is_never_changed(client, 
     disk_full = False
     app_module.process_one_submission("fail0001", "fail0001_Lecture.pptx")
 
-    assert app_module.get_submission("fail0001")["status"] == "done"
+    assert storage_module.get_submission("fail0001")["status"] == "done"
     assert read_bytes(upload_path("fail0001")) == before
 
 
 def test_retry_finds_an_original_an_older_version_moved_into_processed(client):
     add_submission("old00001", status="error")
-    copy_into("control_no_issues.pptx", os.path.join(app_module.PROCESSED_FOLDER, "old00001_Lecture.pptx"))
+    copy_into("control_no_issues.pptx", os.path.join(storage_module.PROCESSED_FOLDER, "old00001_Lecture.pptx"))
 
     client.post("/retry/old00001")
 
@@ -87,7 +88,7 @@ def test_startup_requeues_unfinished_work_and_flags_lost_originals(client, monke
     app_module.recover_unfinished_submissions()
 
     assert requeued == ["wait0001", "half0001"]
-    assert app_module.get_submission("half0001")["status"] == "queued"
-    assert app_module.get_submission("gone0001")["status"] == "error"
-    assert "no longer available" in app_module.get_submission("gone0001")["error_message"]
-    assert app_module.get_submission("done0001")["status"] == "done"
+    assert storage_module.get_submission("half0001")["status"] == "queued"
+    assert storage_module.get_submission("gone0001")["status"] == "error"
+    assert "no longer available" in storage_module.get_submission("gone0001")["error_message"]
+    assert storage_module.get_submission("done0001")["status"] == "done"
