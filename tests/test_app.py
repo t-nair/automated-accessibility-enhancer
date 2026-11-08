@@ -800,3 +800,23 @@ def test_a_rejected_form_can_be_sent_again_from_the_page_it_shows(client):
     response = client.post("/delete/csrf0006", follow_redirects=True)
 
     assert b"Deleted Lecture.pptx" in response.data
+
+
+def test_the_progress_address_follows_the_site_prefix(client):
+    # the browser polls this while a deck is processed. The script used to build the
+    # address from the site root, so behind the project site at /app it asked the
+    # landing page for progress: the bar sat at 0% and the page never reloaded when
+    # the work finished.
+    add_submission(submission_id="prog1234", status="processing")
+
+    page = client.get("/details/prog1234", headers={"X-Forwarded-Prefix": "/app"}).get_data(as_text=True)
+
+    assert 'data-progress-url="/app/progress/prog1234"' in page
+
+
+def test_the_progress_address_is_plain_without_a_prefix(client):
+    add_submission(submission_id="prog5678", status="processing")
+
+    page = client.get("/details/prog5678").get_data(as_text=True)
+
+    assert 'data-progress-url="/progress/prog5678"' in page

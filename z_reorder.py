@@ -1253,6 +1253,120 @@ def find_vague_links(slide):
     return found
 
 
+# words that stay lowercase in a headline, so they do not count against one
+SMALL_WORDS = ("a", "an", "and", "as", "at", "by", "for", "from", "in", "of",
+               "on", "or", "the", "to", "with")
+
+# alt text starting with one of these is somebody describing a picture, even when
+# it is capitalised throughout, as "Portrait of Marie Curie" is
+DESCRIPTION_STARTERS = ("chart", "diagram", "drawing", "graph", "illustration",
+                        "image", "map", "photo", "photograph", "picture",
+                        "portrait", "screenshot", "table")
+
+
+# A picture copied from a web page often brings the page's title along as its alt
+# text. That reads like a real description, so it must not be replaced: somebody
+# may have written it. Saying so is safe, and the person who made the slide can
+# tell in a second whether it describes the picture or names an article.
+#
+# Only the shape of the writing is used. Treating a picture that is also a link as
+# evidence seemed sensible and was not: run across 518 pictures in real decks, it
+# wrongly flagged four captions on linked images and found nothing the wording did
+# not already catch.
+def looks_like_a_page_title(alt_text):
+    words = alt_text.strip().split()
+
+    if len(words) < 3 or len(words) > 14:
+        return False
+
+    # a description tends to end in a full stop; a headline does not
+    if alt_text.strip()[-1] in ".!?":
+        return False
+
+    # a headline is one phrase. A comma usually means somebody naming a thing and
+    # then saying what it is, as in "Salvador Allende, Chilean President".
+    if "," in alt_text:
+        return False
+
+    if words[0].lower().strip(".,:;") in DESCRIPTION_STARTERS:
+        return False
+
+    capitalised = 0
+    counted = 0
+
+    for word in words:
+        if word.lower() in SMALL_WORDS:
+            continue
+
+        counted += 1
+
+        if word[0].isupper():
+            capitalised += 1
+
+    # Title Case, the way headlines are written rather than sentences. Four words
+    # rather than three, because three capitalised words is just as likely to be a
+    # short caption carrying a name, as in "Portrait of Marie Curie".
+    return counted >= 4 and capitalised == counted
+
+
+def find_copied_descriptions(slide):
+    found = []
+
+    for shape in slide.shapes:
+        if not is_picture(shape):
+            continue
+
+        alt_text = (get_picture_alt_text(shape) or "").strip()
+
+        if not alt_text or needs_caption(shape):
+            continue
+
+        if looks_like_a_page_title(alt_text):
+            found.append((shape.name, alt_text))
+
+    return found
+
+
+# A shape sitting entirely outside the slide is invisible to everyone looking at
+# it, and still read out by a screen reader. Only shapes that are completely
+# outside count: real decks are full of shapes a hair over the edge that are
+# perfectly visible.
+def find_offslide_shapes(slide, slide_width, slide_height):
+    found = []
+
+    for shape in slide.shapes:
+        if shape.left is None or shape.top is None or shape.width is None or shape.height is None:
+            continue
+
+        right = shape.left + shape.width
+        bottom = shape.top + shape.height
+
+        if right <= 0 or bottom <= 0 or shape.left >= slide_width or shape.top >= slide_height:
+            found.append(shape.name)
+
+    return found
+
+
+def find_blank_table_cells(slide):
+    found = []
+
+    for shape in slide.shapes:
+        if not shape.has_table:
+            continue
+
+        blank = 0
+
+        for row in shape.table.rows:
+            for cell in row.cells:
+                if not cell.text.strip():
+                    blank += 1
+
+        if blank:
+            found.append((shape.name, blank))
+
+    return found
+
+
 def looks_like_header_row(row):
     """A first row reads as headings when every cell has text and none of it is a number."""
     texts = [cell.text.strip() for cell in row.cells]
@@ -1378,6 +1492,59 @@ def set_language(prs, language):
 
 
 # every problem a check finds gets one of these, worst first, so people know what to fix first
+VOWELS = "aeiouy"
+
+
+def count_syllables(word):
+    word = word.lower().strip(".,:;!?\"'()")
+
+    if not word:
+        return 0
+
+    syllables = 0
+    was_vowel = False
+
+    for letter in word:
+        is_vowel = letter in VOWELS
+
+        if is_vowel and not was_vowel:
+            syllables += 1
+
+        was_vowel = is_vowel
+
+    # a trailing "e" is usually silent, as in "make", but "the" still counts as one
+    if word.endswith("e") and syllables > 1:
+        syllables -= 1
+
+    return max(syllables, 1)
+
+
+# The Flesch Kincaid grade level: roughly what school year someone would need to
+# read this comfortably. It is only a rough guide on slides, which are full of
+# short fragments rather than sentences, so it is reported as a fact and left
+# alone. The right level depends on the audience, and the tool does not know it:
+# a graduate lecture reading at grade 14 is not a problem.
+def measure_reading_level(text):
+    sentences = 0
+
+    for mark in ".!?":
+        sentences += text.count(mark)
+
+    words = text.split()
+
+    if len(words) < 30 or sentences == 0:
+        return None
+
+    syllables = 0
+
+    for word in words:
+        syllables += count_syllables(word)
+
+    grade = (0.39 * (len(words) / sentences)) + (11.8 * (syllables / len(words))) - 15.59
+
+    return round(grade, 1)
+
+
 SEVERITIES = ("critical", "serious", "moderate", "minor")
 
 # ponytail: flat points off per problem, so a long deck scores lower than a short one with
@@ -1462,7 +1629,11 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     header_fixed_lines = []
     no_header_lines = []
     merged_cell_lines = []
+    blank_cell_lines = []
     visual_order_lines = []
+    copied_description_lines = []
+    offslide_lines = []
+    all_words = []
     issues = []
     changes = []
 
@@ -1485,6 +1656,17 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
         for name, text, address in find_vague_links(slide):
             vague_link_lines.append(f"Slide {slide_number}, Shape: {name} - {text[:60]!r} links to {address}")
+
+        for name, alt_text in find_copied_descriptions(slide):
+            copied_description_lines.append(f"Slide {slide_number}, Shape: {name} - {alt_text[:70]!r}")
+
+        for name in find_offslide_shapes(slide, prs.slide_width, prs.slide_height):
+            offslide_lines.append(f"Slide {slide_number}, Shape: {name}")
+
+        for name, blank in find_blank_table_cells(slide):
+            blank_cell_lines.append(f"Slide {slide_number}, Shape: {name} - {blank} empty cell(s)")
+
+        all_words.append(" ".join(shape.text for shape in slide.shapes if shape.has_text_frame))
 
         fixed, no_header, merged = fix_table_headers(slide)
         header_fixed_lines += [f"Slide {slide_number}, Shape: {name}" for name in fixed]
@@ -1566,6 +1748,38 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         for line in small_text_lines:
             f.write(f" - {line} \n")
 
+    # report only: the description may be one somebody wrote, and replacing a real
+    # description is worse than leaving a weak one
+    if copied_description_lines:
+        issues += ["serious"] * len(copied_description_lines)
+        logging.warning(f"{filename}: {len(copied_description_lines)} description(s) that read like a page title.")
+        f.write(" \n [serious] Description reads like the title of a web page rather than the picture, "
+                "left alone in case it was written on purpose (WCAG 1.1.1): \n")
+
+        for line in copied_description_lines:
+            f.write(f" - {line} \n")
+
+    # report only: the shape may be a leftover draft or may be placed that way on
+    # purpose, and only the author knows which
+    if offslide_lines:
+        issues += ["moderate"] * len(offslide_lines)
+        logging.warning(f"{filename}: {len(offslide_lines)} shape(s) sitting outside the slide.")
+        f.write(" \n [moderate] Shape sits outside the slide, so nobody sees it but a screen reader still "
+                "reads it (WCAG 1.3.2): \n")
+
+        for line in offslide_lines:
+            f.write(f" - {line} \n")
+
+    # report only: what belongs in an empty cell is the author's to say
+    if blank_cell_lines:
+        issues += ["minor"] * len(blank_cell_lines)
+        logging.warning(f"{filename}: {len(blank_cell_lines)} table(s) with empty cells.")
+        f.write(" \n [minor] Table has empty cells, which are skipped silently. Putting N/A in them makes the "
+                "table easier to follow (WCAG 1.3.1): \n")
+
+        for line in blank_cell_lines:
+            f.write(f" - {line} \n")
+
     # report only: a replacement colour is a design choice, so a person picks it
     if low_contrast_lines:
         issues += ["serious"] * len(low_contrast_lines)
@@ -1616,11 +1830,18 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         for line in merged_cell_lines:
             f.write(f" - {line} \n")
 
+    reading_level = measure_reading_level(" ".join(all_words))
+
+    # stated, not scored. Whether a grade is too high depends on the audience, and
+    # a graduate lecture reading at grade 14 is exactly right.
+    if reading_level is not None:
+        f.write(f" \n The words on these slides read at about a grade {reading_level} level. \n")
+
     logging.info(f"{filename}: alt text pass done, {captions_done}/{total_to_caption} image(s) captioned.")
 
     return {"slides": len(prs.slides), "shapes_moved": shapes_moved, "captioned": captions_done,
             "small_text": len(small_text_lines), "low_contrast": len(low_contrast_lines), "issues": issues,
-            "changes": changes}
+            "changes": changes, "reading_level": reading_level}
 
 
 def get_picture_alt_text(shape):
