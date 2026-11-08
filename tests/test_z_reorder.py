@@ -1567,3 +1567,97 @@ def test_a_real_deck_goes_through_the_whole_captioning_chain(folders, fake_bedro
 
     assert z_reorder.get_picture_alt_text(picture) == "A red square on a white background."
 
+
+def test_a_page_title_left_on_a_picture_is_spotted():
+    # the real one this came from: a page title that arrived with the image
+    assert z_reorder.looks_like_a_page_title("Types of Wind Turbines Explained") is True
+    assert z_reorder.looks_like_a_page_title("How Electric Motors Actually Work") is True
+
+
+def test_a_description_somebody_wrote_is_left_alone():
+    for written in (
+        "A diagram of a transformer showing primary and secondary coils.",
+        "Graph showing current against time",
+        "Diagram of the Carnot Cycle",
+        "Photograph of the Hoover Dam Spillway",
+    ):
+        assert z_reorder.looks_like_a_page_title(written) is False, written
+
+
+def test_a_caption_carrying_a_name_is_left_alone():
+    # Title Case only because of the names in them. Flagging these was the mistake
+    # that showed up when the check was run over real decks.
+    assert z_reorder.looks_like_a_page_title("Portrait of Marie Curie") is False
+    assert z_reorder.looks_like_a_page_title("Salvador Allende, Chilean President") is False
+    assert z_reorder.looks_like_a_page_title("Map of North America") is False
+
+
+def test_the_picture_keeps_its_description_and_is_only_reported():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    picture = slide.shapes.add_picture(io.BytesIO(make_image_bytes()), Inches(1), Inches(1), Inches(2), Inches(2))
+    picture.name = "Picture 5"
+    z_reorder.set_picture_alt_text(picture, "Types of Wind Turbines Explained")
+
+    found = z_reorder.find_copied_descriptions(slide)
+
+    assert [name for name, alt in found] == ["Picture 5"]
+    # the description is still there, because somebody may have written it
+    assert z_reorder.get_picture_alt_text(picture) == "Types of Wind Turbines Explained"
+
+
+def test_a_shape_entirely_off_the_slide_is_spotted():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    parked = slide.shapes.add_textbox(Inches(11), Inches(2), Inches(3), Inches(1))
+    parked.name = "Parked Note"
+    parked.text_frame.text = "an old draft"
+
+    assert z_reorder.find_offslide_shapes(slide, prs.slide_width, prs.slide_height) == ["Parked Note"]
+
+
+def test_a_shape_only_just_over_the_edge_is_left_alone():
+    # real decks are full of shapes a hair over the edge, and they are still visible
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    nearly = slide.shapes.add_textbox(Inches(-0.1), Inches(1), Inches(4), Inches(1))
+    nearly.text_frame.text = "still on the slide"
+
+    assert z_reorder.find_offslide_shapes(slide, prs.slide_width, prs.slide_height) == []
+
+
+def test_empty_table_cells_are_counted():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    table = slide.shapes.add_table(2, 2, Inches(1), Inches(1), Inches(6), Inches(2)).table
+    table.cell(0, 0).text = "Day"
+    table.cell(0, 1).text = "Morning"
+    table.cell(1, 0).text = "Monday"
+    # cell (1, 1) is left empty on purpose
+
+    found = z_reorder.find_blank_table_cells(slide)
+
+    assert len(found) == 1
+    assert found[0][1] == 1
+
+
+def test_a_full_table_is_left_alone():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    table = slide.shapes.add_table(2, 2, Inches(1), Inches(1), Inches(6), Inches(2)).table
+    for row in range(2):
+        for column in range(2):
+            table.cell(row, column).text = "filled"
+
+    assert z_reorder.find_blank_table_cells(slide) == []
+
+
+def test_the_reading_level_is_measured_on_enough_words():
+    sentences = ("The circuit carries a current. " * 12) + "A magnetic field forms around the wire."
+
+    assert z_reorder.measure_reading_level(sentences) is not None
+
+
+def test_a_few_words_are_not_given_a_reading_level():
+    # slides are full of fragments, and a grade off three words would be noise
+    assert z_reorder.measure_reading_level("Motors and generators") is None
