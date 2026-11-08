@@ -84,7 +84,10 @@ const progressBar = document.getElementById("progress-bar");
 
 if (progressBar) {
     const progressPercent = document.getElementById("progress-percent");
-    const submissionId = progressBar.getAttribute("data-submission-id");
+    // the address comes from the page rather than being built here. Behind the
+    // project site the app is served under /app, and a path starting from the
+    // site root would ask the landing page for the progress instead.
+    const progressUrl = progressBar.getAttribute("data-progress-url");
 
     function showProgress(done, total) {
         let percent = 0;
@@ -98,7 +101,7 @@ if (progressBar) {
     }
 
     function checkProgress() {
-        fetch("/progress/" + submissionId)
+        fetch(progressUrl)
             .then(function (response) {
                 return response.json();
             })

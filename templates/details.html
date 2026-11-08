@@ -47,7 +47,9 @@
                 <p>You can leave this page open. It updates on its own and will show your download when it's ready.</p>
 
                 <div class="progress-row">
-                    <progress id="progress-bar" max="100" value="0" data-submission-id="{{ submission.id }}" aria-label="Processing progress"></progress>
+                    <progress id="progress-bar" max="100" value="0"
+                              data-progress-url="{{ url_for('progress', submission_id=submission.id) }}"
+                              aria-label="Processing progress"></progress>
                     <span class="progress-percent" id="progress-percent" aria-live="polite">0%</span>
                 </div>
             </div>
