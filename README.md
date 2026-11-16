@@ -94,7 +94,7 @@ The app itself has been audited with axe-core on every page and state: **no WCAG
 
 ## Quick start
 
-You need **Python 3.11 or 3.12**, and AWS credentials that can call Bedrock in `us-east-1` for image descriptions. Optional extras:
+You need **Python 3.11, 3.12 or 3.13** (OCR of scanned PDFs needs 3.11 or 3.12; on 3.13 those pages report that OCR is unavailable), and AWS credentials that can call Bedrock in `us-east-1` for image descriptions. Optional extras:
 
 | Optional | For |
 |---|---|

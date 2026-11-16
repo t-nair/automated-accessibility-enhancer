@@ -6,10 +6,14 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      # 3.12 runs the OCR tests; 3.13 has no rapidocr build and checks they skip cleanly (#87)
+      matrix:
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12", cache: pip }
+        with: { python-version: "${{ matrix.python-version }}", cache: pip }
       - run: pip install -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
       - run: python -m pytest tests/ -q
