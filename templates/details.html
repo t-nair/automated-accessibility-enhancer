@@ -91,14 +91,118 @@
             </p>
 
             <h3>Accessibility Report</h3>
-            <p>It starts with a score out of 100 and how many problems of each severity were found, worst first: critical, serious, moderate, minor. Each problem below is marked with its severity.</p>
-            <p>For a presentation, "Changes made" then lists every change written into the downloaded file, by slide, with the value before and after, so you can check each one.</p>
-            {% if submission.saved_filename.lower().endswith(".pdf") %}
-                <p>This report lists how each page was rebuilt and what still needs a person to check.</p>
+
+            {% if report %}
+                <div class="tab-bar" id="tab-bar" role="tablist" hidden>
+                    <button type="button" class="tab-button" id="tab-summary"
+                            role="tab" aria-controls="panel-summary" aria-selected="true">
+                        Summary
+                    </button>
+                    <button type="button" class="tab-button" id="tab-slides"
+                            role="tab" aria-controls="slide-viewer" aria-selected="false">
+                        Slide by slide
+                    </button>
+                </div>
+
+                <section class="tab-panel" id="panel-summary" role="tabpanel" aria-labelledby="tab-summary">
+                    <p class="score-line">
+                        <strong class="score">{{ report.score }}/100</strong>
+                        as uploaded, against WCAG 2.1 AA
+                    </p>
+
+                    <ul class="overview-list">
+                        <li><strong>{{ report.stats.slides }}</strong> slides</li>
+                        <li><strong>{{ report.stats.described }}</strong> images we described</li>
+                        <li><strong>{{ report.stats.already_had }}</strong> images that already had a description</li>
+                        <li><strong>{{ report.stats.words_per_slide }}</strong> words per slide on average</li>
+                        {% if report.stats.reading_level %}
+                            <li>The words read at about a <strong>grade {{ report.stats.reading_level }}</strong> level</li>
+                        {% endif %}
+                    </ul>
+
+                    <h4>What to fix ({{ report.findings|length }})</h4>
+
+                    {% if report.findings %}
+                        <ul class="problem-list">
+                            {% for finding in report.findings %}
+                                <li class="problem-item">
+                                    <span class="problem-kind severity-{{ finding.severity }}">{{ finding.severity }}</span>
+                                    <span class="problem-body">
+                                        <span class="problem-where">
+                                            {% if finding.slide %}Slide {{ finding.slide }} &middot; {% endif %}{{ finding.wcag }}
+                                        </span>
+                                        <span class="problem-detail">{{ finding.summary }}</span>
+                                    </span>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p>We did not find any of the problems we check for.</p>
+                    {% endif %}
+
+                    <details class="full-report">
+                        <summary>The full written report</summary>
+                        <pre class="report-text">{{ report_text }}</pre>
+                    </details>
+                </section>
+
+                <div class="slide-viewer tab-panel" id="slide-viewer" role="tabpanel" aria-labelledby="tab-slides">
+                    <div class="slide-nav" id="slide-nav" hidden>
+                        <button type="button" id="slide-prev">&larr; Previous</button>
+                        <p class="slide-counter" id="slide-counter" aria-live="polite">Slide 1</p>
+                        <button type="button" id="slide-next">Next &rarr;</button>
+                    </div>
+
+                    {% for slide in report.slides %}
+                        <section class="slide-panel" data-slide="{{ slide.number }}">
+                            <h4 class="slide-heading">Slide {{ slide.number }}</h4>
+
+                            {% if slide.findings %}
+                                <ul class="problem-list">
+                                    {% for finding in slide.findings %}
+                                        <li class="problem-item">
+                                            <span class="problem-kind severity-{{ finding.severity }}">{{ finding.severity }}</span>
+                                            <span class="problem-body">
+                                                <span class="problem-where">{{ finding.wcag }}</span>
+                                                <span class="problem-detail">{{ finding.summary }}: {{ finding.detail }}</span>
+                                            </span>
+                                        </li>
+                                    {% endfor %}
+                                </ul>
+                            {% else %}
+                                <p class="slide-clear">Nothing to fix on this slide.</p>
+                            {% endif %}
+
+                            <ul class="shape-list">
+                                {% for shape in slide.shapes %}
+                                    <li class="shape-item">
+                                        {% if shape.we_added_it %}
+                                            <span class="shape-kind shape-kind-generated">gen alt-text</span>
+                                        {% else %}
+                                            <span class="shape-kind shape-kind-{{ shape.kind }}">{{ shape.kind }}</span>
+                                        {% endif %}
+                                        <span class="shape-body">
+                                            <span class="shape-name">{{ shape.name }}</span>
+                                            {% if shape.description %}
+                                                <span class="shape-text">{{ shape.description }}</span>
+                                            {% else %}
+                                                <span class="shape-text shape-text-empty">Nothing for a screen reader to announce.</span>
+                                            {% endif %}
+                                        </span>
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        </section>
+                    {% endfor %}
+                </div>
             {% else %}
-                <p>This report lists each shape on your slides and its alt text, so you can see what screen readers will announce.</p>
+                {% if submission.saved_filename.lower().endswith(".pdf") %}
+                    <p>This report lists how each page was rebuilt and what still needs a person to check.</p>
+                {% else %}
+                    <p>This report lists each shape on your slides and its alt text, so you can see what screen readers will announce.</p>
+                {% endif %}
+                <pre class="report-text">{{ report_text }}</pre>
             {% endif %}
-            <pre class="report-text">{{ report_text }}</pre>
         {% endif %}
 
         {% if submission.status != "queued" and submission.status != "processing" %}

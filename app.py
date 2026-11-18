@@ -526,6 +526,7 @@ def details(submission_id):
         return redirect(url_for("status"))
 
     report_text = "No report is available for this submission."
+    report = None
 
     if matching_submission.get("alt_text_filename"):
         saved_report = storage.read_report(matching_submission)
@@ -535,7 +536,12 @@ def details(submission_id):
         else:
             logging.error(f"Details page for submission {submission_id} expected a report, but it could not be read.")
 
-    return render_template("details.html", submission=matching_submission, report_text=report_text)
+        # the same findings arranged by slide. A PDF, or anything processed before
+        # this existed, has none, and the page shows the text report instead.
+        report = storage.read_report_data(matching_submission)
+
+    return render_template("details.html", submission=matching_submission,
+                           report_text=report_text, report=report)
 
 
 @app.route("/progress/<submission_id>")

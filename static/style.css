@@ -362,3 +362,223 @@ td .delete-form {
     border: 1px solid #ccc;
     padding: 10px;
 }
+.tab-bar {
+    display: flex;
+    gap: 4px;
+    margin: 15px 0 0 0;
+    border-bottom: 2px solid #ccc;
+}
+
+.tab-button {
+    background-color: #eef1f4;
+    color: #1c3d5a;
+    margin-top: 0;
+    padding: 10px 16px;
+    font-size: 0.95em;
+    border-radius: 6px 6px 0 0;
+}
+
+.tab-button:hover {
+    background-color: #dfe5ea;
+}
+
+.tab-button-chosen {
+    background-color: #1c3d5a;
+    color: white;
+}
+
+/* after the hover rule above, or hovering the chosen tab would leave white text
+   on a pale background */
+.tab-button-chosen:hover {
+    background-color: #14293d;
+}
+
+.tab-panel {
+    padding-top: 12px;
+}
+
+.score-line {
+    background-color: #f7f9fb;
+    border: 1px solid #7d97ad;
+    border-radius: 8px;
+    padding: 12px 15px;
+    margin: 0 0 12px 0;
+}
+
+.score {
+    font-size: 1.6em;
+    color: #1c3d5a;
+}
+
+.overview-list {
+    background-color: #f7f9fb;
+    border: 1px solid #7d97ad;
+    border-radius: 8px;
+    padding: 12px 15px 12px 32px;
+    margin: 0;
+}
+
+.overview-list li {
+    margin-bottom: 4px;
+}
+
+.problem-list {
+    list-style: none;
+    border: 1px solid #7d97ad;
+    border-radius: 8px;
+    background-color: #f7f9fb;
+    padding: 0;
+    margin: 0 0 10px 0;
+}
+
+.problem-item {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    border-top: 1px solid #dbe3ea;
+    padding: 10px 14px;
+}
+
+.problem-item:first-child {
+    border-top: none;
+}
+
+.problem-kind {
+    font-size: 0.7em;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: white;
+    padding: 3px 6px;
+    min-width: 62px;
+    text-align: center;
+    white-space: nowrap;
+    height: fit-content;
+}
+
+/* worst first, so the colour says how much it matters at a glance */
+.severity-critical { background-color: #7a1f1b; }
+.severity-serious  { background-color: #8c2f2b; }
+.severity-moderate { background-color: #8a5a00; }
+.severity-minor    { background-color: #4a5a6a; }
+
+.problem-where {
+    display: block;
+    font-size: 0.85em;
+    color: #555;
+}
+
+.problem-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.problem-detail {
+    color: #222;
+}
+
+.slide-nav {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    margin: 15px 0 10px 0;
+}
+
+.slide-nav button {
+    margin-top: 0;
+    padding: 8px 14px;
+    font-size: 0.95em;
+}
+
+.slide-counter {
+    flex: 1;
+    text-align: center;
+    margin: 0;
+    font-weight: bold;
+    color: #1c3d5a;
+}
+
+.slide-panel {
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    padding: 12px 15px;
+    margin-bottom: 8px;
+}
+
+.slide-heading {
+    margin: 0 0 8px 0;
+    color: #1c3d5a;
+}
+
+.slide-clear {
+    color: #3c763d;
+    margin: 0 0 10px 0;
+}
+
+.shape-list {
+    list-style: none;
+    padding: 10px 12px;
+    margin: 0;
+}
+
+.shape-item {
+    display: flex;
+    gap: 10px;
+    padding: 8px 0;
+    border-top: 1px solid #eee;
+}
+
+.shape-kind {
+    font-size: 0.7em;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 3px 6px;
+    min-width: 52px;
+    text-align: center;
+    height: fit-content;
+    background-color: #e8eaed;
+    color: #444;
+}
+
+.shape-kind-image {
+    background-color: #1c3d5a;
+    color: white;
+}
+
+.shape-kind-generated {
+    background-color: #3c763d;
+    color: white;
+    min-width: 78px;
+}
+
+.shape-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.shape-name {
+    display: block;
+    font-size: 0.85em;
+    color: #555;
+}
+
+.shape-text {
+    display: block;
+    color: #222;
+    word-break: break-word;
+}
+
+.shape-text-empty {
+    color: #777;
+    font-style: italic;
+}
+
+.full-report {
+    margin-top: 15px;
+}
+
+.full-report summary {
+    cursor: pointer;
+    color: #1c3d5a;
+}

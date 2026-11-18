@@ -267,6 +267,25 @@ def read_report(submission):
         return f.read()
 
 
+# the same report arranged for the page, written next to the text one. Older
+# submissions and PDFs do not have it, and the page falls back to the text.
+def read_report_data(submission):
+    if not submission["alt_text_filename"]:
+        return None
+
+    path = os.path.join(PROCESSED_FOLDER, submission["alt_text_filename"] + ".json")
+
+    if not os.path.exists(path):
+        return None
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except ValueError:
+        logging.warning(f"The report data for {submission['id']} could not be read.")
+        return None
+
+
 def send_processed_file(submission):
     folder, filename, download_name = processed_file_for(submission)
 

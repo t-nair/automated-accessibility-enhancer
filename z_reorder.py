@@ -1,4 +1,5 @@
 import os
+import json
 import io
 import base64
 import re
@@ -601,6 +602,11 @@ def process_one_file(filename, directory, new_directory, progress_callback=None,
             f.write(severity_summary(issues))
             f.write(changes_summary(counts["changes"] + language_changes))
             f.write(details.getvalue())
+
+        # the same findings again, arranged for the web page. The text file above is
+        # the one to keep or send on; this one is only so the report can be read a
+        # slide at a time instead of as one long block.
+        write_report_data(alt_text_output_file + ".json", prs, counts, issues, language_issues)
     except Exception as e:
         logging.exception(f"Something went wrong processing shapes in {filename}. Error: {e}")
         return False, "We opened your file, but something went wrong while checking your slides for accessibility issues.", [
@@ -1552,6 +1558,70 @@ SEVERITIES = ("critical", "serious", "moderate", "minor")
 SEVERITY_POINTS = {"critical": 10, "serious": 5, "moderate": 2, "minor": 1}
 
 
+SLIDE_IN_LINE = re.compile(r"^Slide ([0-9]+)")
+
+
+# the lines a section writes already start with the slide they belong to, so the
+# page can group them without every check having to report itself twice
+def describe_shape_for_report(shape, slide_number, we_added_it):
+    if is_picture(shape):
+        return {"slide": slide_number, "name": shape.name, "kind": "image",
+                "description": get_picture_alt_text(shape) or "", "we_added_it": we_added_it}
+
+    if shape.has_text_frame and shape.text.strip():
+        return {"slide": slide_number, "name": shape.name, "kind": "text",
+                "description": shape.text.strip(), "we_added_it": False}
+
+    return {"slide": slide_number, "name": shape.name, "kind": "other",
+            "description": "", "we_added_it": False}
+
+
+def note_findings(findings, severity, wcag, summary, lines):
+    for line in lines:
+        match = SLIDE_IN_LINE.match(line)
+        detail = line.split(" - ", 1)[-1] if " - " in line else line
+        detail = SLIDE_IN_LINE.sub("", detail).lstrip(", ")
+
+        findings.append({
+            "slide": int(match.group(1)) if match else None,
+            "severity": severity,
+            "wcag": wcag,
+            "summary": summary,
+            "detail": detail,
+        })
+
+
+def write_report_data(path, prs, counts, issues, language_issues):
+    counted = {severity: issues.count(severity) for severity in SEVERITIES}
+    slides = []
+
+    for number in range(1, len(prs.slides) + 1):
+        slides.append({
+            "number": number,
+            "shapes": [shape for shape in counts["shape_records"] if shape["slide"] == number],
+            "findings": [finding for finding in counts["findings"] if finding["slide"] == number],
+        })
+
+    data = {
+        "score": max(0, 100 - sum(SEVERITY_POINTS[severity] * n for severity, n in counted.items())),
+        "severity_counts": counted,
+        "findings": counts["findings"],
+        "whole_file_findings": [finding for finding in counts["findings"] if finding["slide"] is None],
+        "language_issues": len(language_issues),
+        "slides": slides,
+        "stats": {
+            "slides": len(prs.slides),
+            "described": counts["captioned"],
+            "already_had": counts["already_described"],
+            "words_per_slide": counts["words_per_slide"],
+            "reading_level": counts["reading_level"],
+        },
+    }
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+
 def severity_summary(issues):
     """The report's opening lines: a score out of 100 and how many problems of each severity.
 
@@ -1636,6 +1706,9 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
     all_words = []
     issues = []
     changes = []
+    findings = []
+    shape_records = []
+    already_described = 0
 
     for slide_number, slide in enumerate(prs.slides, start=1):
 
@@ -1706,6 +1779,11 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
             if severity:
                 issues.append(severity)
 
+            shape_records.append(describe_shape_for_report(shape, slide_number, needed_caption))
+
+            if is_picture(shape) and not needed_caption:
+                already_described += 1
+
             if needed_caption:
                 changes.append(
                     f"Slide {slide_number}, Shape: {shape.name} - alt text before: "
@@ -1732,12 +1810,16 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         for line in visual_order_lines:
             f.write(f" - {line} \n")
 
+        note_findings(findings, "moderate", "WCAG 1.3.2", "Read in a different order than it appears", visual_order_lines)
+
     # report only: a generated title would be a guess, so a person adds the real one
     if untitled_slides:
         issues += ["serious"] * len(untitled_slides)
         slide_list = ", ".join(str(n) for n in untitled_slides)
         logging.warning(f"{filename}: slides with no title: {slide_list}")
         f.write(f" \n [serious] Slides with no title (WCAG 2.4.2): {slide_list} \n")
+        note_findings(findings, "serious", "WCAG 2.4.2", "Slide has no title",
+                      [f"Slide {number}" for number in untitled_slides])
 
     # report only: raising sizes can break the layout, so a person decides
     if small_text_lines:
@@ -1747,6 +1829,8 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
         for line in small_text_lines:
             f.write(f" - {line} \n")
+
+        note_findings(findings, "minor", "WCAG 1.4.4", f"Text below {MIN_FONT_PT:g} pt", small_text_lines)
 
     # report only: the description may be one somebody wrote, and replacing a real
     # description is worse than leaving a weak one
@@ -1759,6 +1843,8 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         for line in copied_description_lines:
             f.write(f" - {line} \n")
 
+        note_findings(findings, "serious", "WCAG 1.1.1", "Description reads like a web page title", copied_description_lines)
+
     # report only: the shape may be a leftover draft or may be placed that way on
     # purpose, and only the author knows which
     if offslide_lines:
@@ -1770,6 +1856,8 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         for line in offslide_lines:
             f.write(f" - {line} \n")
 
+        note_findings(findings, "moderate", "WCAG 1.3.2", "Shape sits outside the slide", offslide_lines)
+
     # report only: what belongs in an empty cell is the author's to say
     if blank_cell_lines:
         issues += ["minor"] * len(blank_cell_lines)
@@ -1780,6 +1868,8 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         for line in blank_cell_lines:
             f.write(f" - {line} \n")
 
+        note_findings(findings, "minor", "WCAG 1.3.1", "Table has empty cells", blank_cell_lines)
+
     # report only: a replacement colour is a design choice, so a person picks it
     if low_contrast_lines:
         issues += ["serious"] * len(low_contrast_lines)
@@ -1789,11 +1879,13 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         for line in low_contrast_lines:
             f.write(f" - {line} \n")
 
-    if unchecked_contrast_lines:
-        f.write(" \n Contrast not checked, the background or text is not one solid colour (WCAG 1.4.3): \n")
+        note_findings(findings, "serious", "WCAG 1.4.3", "Text with too little contrast", low_contrast_lines)
 
-        for line in unchecked_contrast_lines:
-            f.write(f" - {line} \n")
+    if unchecked_contrast_lines:
+        # one line per cell meant a single table filled the report, so this says how
+        # many were skipped and leaves the detail to the person who looks
+        shapes = len({line.split(":")[0] for line in unchecked_contrast_lines})
+        f.write(f" \n Contrast not checked on {shapes} shape(s), where the background or text is not one solid colour (WCAG 1.4.3). \n")
 
     # report only: better wording depends on the sentence around the link, so a person writes it
     if vague_link_lines:
@@ -1803,6 +1895,8 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
         for line in vague_link_lines:
             f.write(f" - {line} \n")
+
+        note_findings(findings, "moderate", "WCAG 2.4.4", "Link text does not say where it goes", vague_link_lines)
 
     # already fixed, but listed so the score matches what was found
     if header_fixed_lines:
@@ -1821,6 +1915,8 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
         for line in no_header_lines:
             f.write(f" - {line} \n")
 
+        note_findings(findings, "serious", "WCAG 1.3.1", "Table has no header row", no_header_lines)
+
     # report only: unmerging changes the table's layout, so a person decides
     if merged_cell_lines:
         issues += ["moderate"] * len(merged_cell_lines)
@@ -1829,6 +1925,8 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
         for line in merged_cell_lines:
             f.write(f" - {line} \n")
+
+        note_findings(findings, "moderate", "WCAG 1.3.1", "Table has merged or split cells", merged_cell_lines)
 
     reading_level = measure_reading_level(" ".join(all_words))
 
@@ -1839,9 +1937,13 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
 
     logging.info(f"{filename}: alt text pass done, {captions_done}/{total_to_caption} image(s) captioned.")
 
+    words = sum(len(piece.split()) for piece in all_words)
+
     return {"slides": len(prs.slides), "shapes_moved": shapes_moved, "captioned": captions_done,
             "small_text": len(small_text_lines), "low_contrast": len(low_contrast_lines), "issues": issues,
-            "changes": changes, "reading_level": reading_level}
+            "changes": changes, "reading_level": reading_level, "findings": findings,
+            "shape_records": shape_records, "already_described": already_described,
+            "words_per_slide": round(words / len(prs.slides)) if len(prs.slides) else 0}
 
 
 def get_picture_alt_text(shape):
