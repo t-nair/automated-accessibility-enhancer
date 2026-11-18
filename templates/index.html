@@ -32,7 +32,7 @@
         {% endwith %}
 
         <h2>Submit PowerPoint or PDF Files</h2>
-        <p>Upload one or more .pptx or .ppt files below. We'll fix the slide reading order so screen readers announce titles first, write descriptions for images that are missing them, and give you a report of what we found, including any problems with the presentation's language. PDFs are rebuilt as a tagged PDF with a title and language; scanned pages are read with OCR and marked for a person to check.</p>
+        <p>Upload one or more .pptx, .ppt or .pdf files below. We'll fix the slide reading order so screen readers announce titles first, write descriptions for images that are missing them, and give you a report of what we found, including any problems with the presentation's language. PDFs are rebuilt as a tagged PDF with a title and language; scanned pages are read with OCR and marked for a person to check.</p>
 
         <form action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data" id="upload-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -58,6 +58,7 @@
             </label>
 
             <p class="chosen-file" id="chosen-file" aria-live="polite">No files chosen yet.</p>
+            <ul class="file-list" id="file-list"></ul>
 
             <label for="language">Language of the presentation (optional)</label>
             <select id="language" name="language" aria-describedby="language-help">

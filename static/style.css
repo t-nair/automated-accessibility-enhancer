@@ -145,6 +145,50 @@ button:focus {
     color: #555;
 }
 
+.file-list {
+    list-style: none;
+    padding: 0;
+    margin: 10px 0 0 0;
+}
+
+.file-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background-color: #ffffff;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+}
+
+.file-name {
+    flex: 1;
+    min-width: 0;
+    color: #222;
+    word-break: break-word;
+}
+
+.file-size {
+    font-size: 0.85em;
+    color: #555;
+    white-space: nowrap;
+}
+
+.file-remove {
+    background-color: transparent;
+    color: #8c2f2b;
+    font-size: 1.5em;
+    line-height: 1;
+    padding: 2px 10px;
+    margin-top: 0;
+    border-radius: 4px;
+}
+
+.file-remove:hover {
+    background-color: #f2dede;
+}
+
 .chosen-file {
     margin-top: 10px;
     color: #555;

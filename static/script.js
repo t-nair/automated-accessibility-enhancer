@@ -2,28 +2,135 @@ const uploadForm = document.getElementById("upload-form");
 const dropZone = document.getElementById("drop-zone");
 const fileInput = document.getElementById("presentation");
 const chosenFile = document.getElementById("chosen-file");
+const fileList = document.getElementById("file-list");
+
+const ACCEPTED_TYPES = [".pptx", ".ppt", ".pdf"];
+
+// the files chosen so far, which is what the page shows and what gets submitted.
+// Dropping or picking more adds to this rather than replacing it, because someone
+// gathering a term's slides a few at a time should not lose the earlier ones.
+let chosenFiles = [];
 
 
-function showChosenFile() {
-    if (fileInput.files.length === 0) {
+function isAccepted(filename) {
+    const lowered = filename.toLowerCase();
+
+    for (let i = 0; i < ACCEPTED_TYPES.length; i++) {
+        if (lowered.endsWith(ACCEPTED_TYPES[i])) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+function alreadyChosen(file) {
+    for (let i = 0; i < chosenFiles.length; i++) {
+        if (chosenFiles[i].name === file.name && chosenFiles[i].size === file.size) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+// the file input cannot be changed a file at a time, so the whole list is rebuilt
+// from chosenFiles and handed back to it
+function putChosenFilesOnTheInput() {
+    const kept = new DataTransfer();
+
+    for (let i = 0; i < chosenFiles.length; i++) {
+        kept.items.add(chosenFiles[i]);
+    }
+
+    fileInput.files = kept.files;
+}
+
+
+function addFiles(files) {
+    for (let i = 0; i < files.length; i++) {
+        if (!alreadyChosen(files[i])) {
+            chosenFiles.push(files[i]);
+        }
+    }
+
+    putChosenFilesOnTheInput();
+    showChosenFiles();
+}
+
+
+function removeChosenFile(index) {
+    chosenFiles.splice(index, 1);
+    putChosenFilesOnTheInput();
+    showChosenFiles();
+}
+
+
+function formatSize(bytes) {
+    const kilobytes = bytes / 1024;
+
+    if (kilobytes < 1024) {
+        return Math.round(kilobytes) + " KB";
+    }
+
+    return (kilobytes / 1024).toFixed(1) + " MB";
+}
+
+
+function makeFileRow(file, index) {
+    const row = document.createElement("li");
+    row.className = "file-row";
+
+    const name = document.createElement("span");
+    name.className = "file-name";
+    name.textContent = file.name;
+
+    const size = document.createElement("span");
+    size.className = "file-size";
+    size.textContent = formatSize(file.size);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "file-remove";
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", "Remove " + file.name);
+
+    // taking a file back off the list is easy to undo by choosing it again, so it
+    // happens on the first press without asking
+    remove.addEventListener("click", function () {
+        removeChosenFile(index);
+    });
+
+    row.appendChild(name);
+    row.appendChild(size);
+    row.appendChild(remove);
+
+    return row;
+}
+
+
+function showChosenFiles() {
+    fileList.textContent = "";
+
+    if (chosenFiles.length === 0) {
         chosenFile.textContent = "No files chosen yet.";
         chosenFile.classList.remove("chosen-file-selected");
         return;
     }
 
-    const names = [];
-
-    for (let i = 0; i < fileInput.files.length; i++) {
-        names.push(fileInput.files[i].name);
-    }
-
-    if (names.length === 1) {
-        chosenFile.textContent = "Chosen file: " + names[0];
+    if (chosenFiles.length === 1) {
+        chosenFile.textContent = "1 file chosen";
     } else {
-        chosenFile.textContent = "Chosen " + names.length + " files: " + names.join(", ");
+        chosenFile.textContent = chosenFiles.length + " files chosen";
     }
 
     chosenFile.classList.add("chosen-file-selected");
+
+    for (let i = 0; i < chosenFiles.length; i++) {
+        fileList.appendChild(makeFileRow(chosenFiles[i], i));
+    }
 }
 
 
@@ -41,14 +148,14 @@ if (dropZone) {
     dropZone.addEventListener("drop", function (event) {
         event.preventDefault();
         dropZone.classList.remove("drop-zone-active");
-
-        if (event.dataTransfer.files.length > 0) {
-            fileInput.files = event.dataTransfer.files;
-            showChosenFile();
-        }
+        addFiles(event.dataTransfer.files);
     });
 
-    fileInput.addEventListener("change", showChosenFile);
+    // the input holds only what was picked this time, so take those and put the
+    // full list back
+    fileInput.addEventListener("change", function () {
+        addFiles(fileInput.files);
+    });
 }
 
 
@@ -138,16 +245,14 @@ if (uploadForm) {
         const wrongTypeNames = [];
 
         for (let i = 0; i < fileInput.files.length; i++) {
-            const fileName = fileInput.files[i].name.toLowerCase();
-
-            if (!fileName.endsWith(".pptx") && !fileName.endsWith(".ppt")) {
+            if (!isAccepted(fileInput.files[i].name)) {
                 wrongTypeNames.push(fileInput.files[i].name);
             }
         }
 
         if (wrongTypeNames.length > 0) {
             event.preventDefault();
-            alert("Only .pptx and .ppt files are accepted. Please remove: " + wrongTypeNames.join(", "));
+            alert("Only .pptx, .ppt and .pdf files are accepted. Please remove: " + wrongTypeNames.join(", "));
         }
     });
 }
