@@ -398,24 +398,28 @@ td .delete-form {
 }
 
 .score-line {
-    background-color: #f7f9fb;
-    border: 1px solid #7d97ad;
-    border-radius: 8px;
-    padding: 12px 15px;
+    background-color: #ffffff;
+    border: 1px solid #dce0e4;
+    border-left: 4px solid #1c3d5a;
+    border-radius: 6px;
+    padding: 14px 18px;
     margin: 0 0 12px 0;
+    color: #555;
 }
 
 .score {
-    font-size: 1.6em;
-    color: #1c3d5a;
+    font-size: 1.9em;
+    color: #222;
+    margin-right: 4px;
 }
 
 .overview-list {
-    background-color: #f7f9fb;
-    border: 1px solid #7d97ad;
-    border-radius: 8px;
-    padding: 12px 15px 12px 32px;
+    background-color: #ffffff;
+    border: 1px solid #dce0e4;
+    border-radius: 6px;
+    padding: 12px 18px 12px 34px;
     margin: 0;
+    color: #444;
 }
 
 .overview-list li {
@@ -424,19 +428,19 @@ td .delete-form {
 
 .problem-list {
     list-style: none;
-    border: 1px solid #7d97ad;
-    border-radius: 8px;
-    background-color: #f7f9fb;
+    border: 1px solid #dce0e4;
+    border-radius: 6px;
+    background-color: #ffffff;
     padding: 0;
     margin: 0 0 10px 0;
 }
 
 .problem-item {
     display: flex;
-    gap: 10px;
+    gap: 12px;
     align-items: flex-start;
-    border-top: 1px solid #dbe3ea;
-    padding: 10px 14px;
+    border-top: 1px solid #ebeef1;
+    padding: 11px 16px;
 }
 
 .problem-item:first-child {
@@ -499,9 +503,9 @@ td .delete-form {
 }
 
 .slide-panel {
-    border: 1px solid #ccc;
-    border-radius: 8px;
-    padding: 12px 15px;
+    border: 1px solid #dce0e4;
+    border-radius: 6px;
+    padding: 14px 18px;
     margin-bottom: 8px;
 }
 
@@ -574,11 +578,23 @@ td .delete-form {
     font-style: italic;
 }
 
-.full-report {
-    margin-top: 15px;
+.report-link {
+    display: inline-block;
+    border: 1px solid #1c3d5a;
+    border-radius: 6px;
+    color: #1c3d5a;
+    text-decoration: none;
+    padding: 8px 16px;
+    margin-top: 10px;
+    font-size: 0.95em;
 }
 
-.full-report summary {
-    cursor: pointer;
-    color: #1c3d5a;
+.report-link:hover {
+    background-color: #1c3d5a;
+    color: white;
+}
+
+.report-link:focus {
+    outline: 3px solid #ffbf47;
+    outline-offset: 2px;
 }

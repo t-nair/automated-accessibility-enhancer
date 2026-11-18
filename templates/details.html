@@ -140,10 +140,10 @@
                         <p>We did not find any of the problems we check for.</p>
                     {% endif %}
 
-                    <details class="full-report">
-                        <summary>The full written report</summary>
-                        <pre class="report-text">{{ report_text }}</pre>
-                    </details>
+                    <p>
+                        <a href="{{ url_for('download_report', submission_id=submission.id) }}"
+                           class="report-link">Download full report (.txt)</a>
+                    </p>
                 </section>
 
                 <div class="slide-viewer tab-panel" id="slide-viewer" role="tabpanel" aria-labelledby="tab-slides">

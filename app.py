@@ -8,7 +8,7 @@ import secrets
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, Response
 from werkzeug.utils import secure_filename
 from z_reorder import process_one_file, severity_summary
 
@@ -617,6 +617,30 @@ def delete(submission_id):
     flash(f"Deleted {submission['original_filename']}.")
 
     return redirect(url_for("status"))
+
+
+@app.route("/report/<submission_id>")
+def download_report(submission_id):
+    matching_submission = get_my_submission(submission_id)
+
+    if matching_submission is None:
+        logging.warning(f"Report requested for a submission that is unknown or belongs to someone else: {submission_id}")
+        flash("That submission could not be found.")
+        return redirect(url_for("status"))
+
+    report_text = storage.read_report(matching_submission)
+
+    if report_text is None:
+        flash("There is no report to download for that submission.")
+        return redirect(url_for("details", submission_id=submission_id))
+
+    # the report is written without an extension, so give the download a .txt one
+    # for the sake of whoever opens it
+    filename = os.path.splitext(matching_submission["original_filename"])[0] + "_accessibility_report.txt"
+
+    # Flask adds the charset itself, so naming it here would say it twice
+    return Response(report_text, mimetype="text/plain",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.route("/download/<submission_id>")
