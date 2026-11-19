@@ -180,8 +180,10 @@ resource "aws_ecs_express_gateway_service" "this" {
     image          = var.image_uri
     container_port = 8080
 
+    # the API requires the prefix, although the provider docs call it optional
     aws_logs_configuration {
-      log_group = aws_cloudwatch_log_group.this.name
+      log_group         = aws_cloudwatch_log_group.this.name
+      log_stream_prefix = "web"
     }
 
     dynamic "environment" {

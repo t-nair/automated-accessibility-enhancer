@@ -78,7 +78,7 @@ variable "lambda_memory_mb" {
 }
 
 variable "lambda_reserved_concurrency" {
-  description = "Ceiling on decks in flight at once."
+  description = "Ceiling on decks in flight at once. -1 reserves nothing, which a new account needs: its total of 10 has to stay unreserved until AWS raises the limit."
   type        = number
   default     = 5
 }
