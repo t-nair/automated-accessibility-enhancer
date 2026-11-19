@@ -32,5 +32,5 @@ ENV LOG_FILE=
 # meant to face the internet. gunicorn is the usual choice but does not run on
 # Windows, and this has to be runnable on a laptop too.
 # written as one line rather than a list so that the shell fills in PORT. A host
-# that assigns its own port, as Render does, is then served on the right one.
+# that assigns its own port is then served on the right one.
 CMD waitress-serve --host=0.0.0.0 --port=${PORT:-8080} app:app

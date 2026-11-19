@@ -33,10 +33,10 @@ app = Flask(__name__)
 PROXY_PREFIX = "/app"
 
 
-# Only PROXY_PREFIX is honored. Render is reachable directly, so anyone can send this
+# Only PROXY_PREFIX is honored. The ECS address is reachable directly, so anyone can send this
 # header; accepting whatever it says would let a caller choose the prefix every link on
 # the page is built under. Accepting one known value makes that pointless, and leaves
-# direct .onrender.com traffic serving itself at the root as before.
+# direct traffic to the ECS address serving itself at the root as before.
 def _mount_under_known_prefix(wsgi_app):
     def wrapper(environ, start_response):
         if environ.get("HTTP_X_FORWARDED_PREFIX") == PROXY_PREFIX:

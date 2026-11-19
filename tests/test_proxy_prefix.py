@@ -29,7 +29,7 @@ def test_without_the_header_urls_stay_at_the_root():
     assert 'action="/upload"' in page
 
 
-# Render is reachable directly, so the header is attacker-controlled. Honoring any value
+# The ECS address is reachable directly, so the header is attacker-controlled. Honoring any value
 # would let a caller decide the prefix every link on the page is built under.
 def test_an_unknown_prefix_is_ignored():
     page = get_home("/evil")
