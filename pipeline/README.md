@@ -8,7 +8,7 @@ does not calculate an accessibility score or claim conformance.
 
 Use Python 3.11 or 3.12. On Windows run `./pipeline/setup.ps1` from the project
 directory once to install the local environment and pinned English OCR model.
-See [the OCR pathway guide](../docs/OCR_PATHWAY.md) for exact processing rules.
+See [the OCR pathway guide](../docs/ocr-pathway.md) for exact processing rules.
 
 ```powershell
 ./.venv/Scripts/python.exe -m pipeline.cli "input.pdf" --output-dir output/remediation
@@ -53,3 +53,24 @@ required for inferred reading order, heading choices, lists, tables, charts,
 and non-text content. Output verification checks semantic roles, marked-content
 connections, the parent tree, page structure-parent links, language, title, and
 missing Figure alternatives. It does not certify PDF/UA or WCAG conformance.
+
+## How ready it is
+
+The 30-test PDF suite passes, a real image-only fixture completes OCR and
+reconstruction, and a browser-generated PDF passes the tag audit, which rejects
+empty tag trees and checks roles, content references, parent-tree and page
+connections, language, title and Figure alt text.
+
+It is not yet a general-purpose or conformance-certified PDF remediator. Before
+relying on it, it needs broader document testing, resource limits, broader image
+evaluation, automatic chart-data recovery, richer layout understanding and a
+defined human review workflow. PDF/UA or WCAG claims need independent validation.
+
+## Reading the code
+
+1. `inspect_pdf.py` and `models.py`: the page routes and thresholds.
+2. `reading_order.py`, `ocr.py` and [the OCR pathway guide](../docs/ocr-pathway.md):
+   ordering evidence and human review.
+3. `images.py` and its review JSON: figure text and approval.
+4. `rebuild_html.py`, `chrome_pdf.py` and `cli.py`: reconstruction, export,
+   verification and manifests.

@@ -14,6 +14,11 @@ The [open decisions](#open-decisions) at the end still need an owner.
 
 ## Production
 
+![Production architecture](architecture.svg)
+
+The diagram follows a deck from upload to download. Cognito is drawn dashed
+because sign-in is still being built (#77).
+
 | | |
 |---|---|
 | Address | `https://accessibilityenhancer.com/app` ("Try the tool" on the project site) |
