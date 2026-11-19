@@ -134,6 +134,27 @@ module "pipeline" {
   depends_on = [module.observability]
 }
 
+module "auth" {
+  source = "../../modules/cognito"
+
+  name_prefix   = local.name_prefix
+  project       = var.project
+  environment   = var.environment
+  domain_prefix = var.cognito_domain_prefix
+
+  callback_urls = concat(["${var.public_url}/auth/callback"], var.cognito_extra_callback_urls)
+  logout_urls   = concat(["${var.public_url}/"], var.cognito_extra_logout_urls)
+
+  google_client_id        = var.google_client_id
+  google_client_secret    = var.google_client_secret
+  microsoft_client_id     = var.microsoft_client_id
+  microsoft_client_secret = var.microsoft_client_secret
+  microsoft_tenant_id     = var.microsoft_tenant_id
+
+  email_domain          = var.email_domain
+  email_domain_verified = var.email_domain_verified
+}
+
 module "website" {
   source = "../../modules/ecs_web"
 
@@ -155,6 +176,15 @@ module "website" {
   # the website decides a run has died once this has passed, so it has to agree
   # with what the pipeline is actually allowed
   pipeline_timeout_seconds = var.lambda_timeout_seconds
+
+  public_url = var.public_url
+  cognito = {
+    issuer                       = module.auth.issuer
+    domain_url                   = module.auth.domain_url
+    client_id                    = module.auth.client_id
+    client_secret_parameter_name = module.auth.client_secret_parameter_name
+    client_secret_parameter_arn  = module.auth.client_secret_parameter_arn
+  }
 
   cpu                = var.web_cpu
   memory             = var.web_memory

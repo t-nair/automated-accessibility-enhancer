@@ -100,6 +100,20 @@ data "aws_iam_policy_document" "task" {
 
     resources = [var.secret_key_parameter_arn]
   }
+
+  # the Cognito app client secret, for exchanging a sign-in code for tokens
+  dynamic "statement" {
+    for_each = var.cognito == null ? [] : [1]
+
+    content {
+      sid    = "ReadTheSignInClientSecret"
+      effect = "Allow"
+
+      actions = ["ssm:GetParameter"]
+
+      resources = [var.cognito.client_secret_parameter_arn]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "task" {
@@ -187,14 +201,25 @@ resource "aws_ecs_express_gateway_service" "this" {
     }
 
     dynamic "environment" {
-      for_each = {
-        UPLOADS_BUCKET           = var.uploads_bucket_name
-        PROCESSED_BUCKET         = var.processed_bucket_name
-        SUBMISSIONS_TABLE        = var.submissions_table_name
-        SECRET_KEY_PARAMETER     = var.secret_key_parameter_name
-        PIPELINE_TIMEOUT_SECONDS = tostring(var.pipeline_timeout_seconds)
-        DEBUG                    = "false"
-      }
+      for_each = merge(
+        {
+          UPLOADS_BUCKET           = var.uploads_bucket_name
+          PROCESSED_BUCKET         = var.processed_bucket_name
+          SUBMISSIONS_TABLE        = var.submissions_table_name
+          SECRET_KEY_PARAMETER     = var.secret_key_parameter_name
+          PIPELINE_TIMEOUT_SECONDS = tostring(var.pipeline_timeout_seconds)
+          DEBUG                    = "false"
+          # the address people reach the site at. The Cloudflare proxy drops
+          # Host, so sign-in redirects cannot be built from the request.
+          PUBLIC_URL = var.public_url
+        },
+        var.cognito == null ? {} : {
+          COGNITO_ISSUER                  = var.cognito.issuer
+          COGNITO_DOMAIN                  = var.cognito.domain_url
+          COGNITO_CLIENT_ID               = var.cognito.client_id
+          COGNITO_CLIENT_SECRET_PARAMETER = var.cognito.client_secret_parameter_name
+        },
+      )
 
       content {
         name  = environment.key

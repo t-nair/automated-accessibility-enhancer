@@ -19,6 +19,7 @@ and on AWS it keeps them in DynamoDB and leaves the work to the Lambda.
 | `modules/ecr` | The registries the two container images are pushed to, one each for the pipeline and the website. |
 | `modules/dynamodb` | The table of submissions, which replaces the sqlite file the local version uses. |
 | `modules/ecs_web` | The website itself on ECS Express Mode, which brings its own load balancer and HTTPS certificate, and the permissions it runs with. |
+| `modules/cognito` | Sign-in: a Cognito user pool, its sign-in pages, the website's app client, Google and Microsoft when configured, and SES for email. See *Sign-in* below. |
 | `modules/lambda` | The function, its execution role, and the S3 trigger. |
 | `modules/observability` | Log group with a retention period, an SNS topic, and four alarms. |
 | `modules/github_oidc` | Two roles GitHub Actions assumes without an access key: one to run `terraform plan` on pull requests, one to deploy from `main`. |
@@ -192,6 +193,74 @@ and then:
 ```bash
 terraform apply -var image_tag=<tag>
 ```
+
+---
+
+## Sign-in
+
+Accounts are in an Amazon Cognito user pool (`modules/cognito`, #77). The website
+sends people to Cognito's sign-in pages and gets them back at
+`<public_url>/auth/callback`. The website's half of this is the second part of
+#77; until it ships the pool exists but nothing uses it.
+
+Out of the box the pool has **email and password** only, with verification and
+password reset by email. Google, Microsoft and SES are each turned on by setting
+their variables in the `TFVARS` secret, after the steps below.
+
+`terraform output cognito_identity_provider_redirect_uri` is the redirect URI that
+both the Google and the Microsoft apps need.
+
+The pool has deletion protection on, because deleting it deletes every account.
+To tear an environment down, turn it off in the console first.
+
+### Google
+
+1. In Google Cloud, create a project and open **APIs & Services → OAuth consent
+   screen**. Choose **External**, add the `openid`, `email` and `profile` scopes,
+   and publish it.
+2. Under **Credentials**, create an **OAuth client ID** of type **Web
+   application**. Add the redirect URI above as an authorized redirect URI, and
+   `https://<cognito_sign_in_domain host>` as an authorized JavaScript origin.
+3. Set `google_client_id` and `google_client_secret`.
+
+### Microsoft
+
+Cognito checks a token's issuer against one exact URL, and Microsoft's
+multi-tenant endpoints put each tenant's own id in the issuer, so **one Microsoft
+provider signs in one tenant**: UW's, for UW Microsoft accounts, or
+`9188040d-6c67-4c5b-b112-36a304b66dad` for personal Microsoft accounts.
+
+1. In the Entra admin center, under **App registrations**, register an app. Pick
+   the account type that matches the tenant above, and add the redirect URI above
+   as a **Web** redirect URI.
+2. Under **Certificates & secrets**, create a client secret. It expires, so note
+   the date; sign-in with Microsoft stops when it does.
+3. Under **Token configuration**, add the optional `email` claim to the ID token.
+4. Set `microsoft_client_id`, `microsoft_client_secret` and `microsoft_tenant_id`.
+
+UW's tenant may need UW IT to consent to the app. That is the same conversation
+as NetID.
+
+### Email through SES
+
+Cognito's own sender stops at about 50 emails a day. SES has no such limit, but
+takes two applies and a request to AWS:
+
+1. Set `email_domain = "accessibilityenhancer.com"` and apply. Add the three
+   records from `terraform output email_dkim_records` in Cloudflare as **CNAME,
+   DNS only** (not proxied).
+2. When the SES console shows the domain as verified, set
+   `email_domain_verified = true` and apply again. Verification and reset emails
+   now come from `no-reply@accessibilityenhancer.com`.
+3. A new SES account is in the **sandbox** and can only send to addresses it has
+   verified. Request production access in the SES console, under **Account
+   dashboard**, before real people sign up.
+
+### Trying sign-in locally
+
+Set `cognito_extra_callback_urls = ["http://localhost:5000/auth/callback"]` and
+`cognito_extra_logout_urls = ["http://localhost:5000/"]`. Cognito allows http only
+for localhost.
 
 ---
 
