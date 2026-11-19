@@ -100,3 +100,20 @@ variable "security_group_ids" {
   type        = list(string)
   default     = null
 }
+
+variable "public_url" {
+  description = "The address people reach the website at, without a trailing slash."
+  type        = string
+}
+
+variable "cognito" {
+  description = "The user pool the website signs people in with. Leave null to keep the signed-cookie identity."
+  type = object({
+    issuer                       = string
+    domain_url                   = string
+    client_id                    = string
+    client_secret_parameter_name = string
+    client_secret_parameter_arn  = string
+  })
+  default = null
+}

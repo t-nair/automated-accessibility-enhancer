@@ -160,3 +160,71 @@ variable "web_subnet_ids" {
   type        = list(string)
   default     = null
 }
+
+# --- sign-in (Cognito, #77) ---
+
+variable "public_url" {
+  description = "The address people reach the website at, without a trailing slash. Sign-in redirects are built from it."
+  type        = string
+  default     = "https://accessibilityenhancer.com/app"
+}
+
+variable "cognito_domain_prefix" {
+  description = "Sign-in pages are served at https://<prefix>.auth.<region>.amazoncognito.com. Unique across the region."
+  type        = string
+  default     = "accessibility-enhancer"
+}
+
+variable "cognito_extra_callback_urls" {
+  description = "More sign-in callback URLs, such as http://localhost:5000/auth/callback for trying sign-in locally."
+  type        = list(string)
+  default     = []
+}
+
+variable "cognito_extra_logout_urls" {
+  description = "More sign-out URLs, to match cognito_extra_callback_urls."
+  type        = list(string)
+  default     = []
+}
+
+variable "google_client_id" {
+  description = "OAuth client id from Google Cloud. Leave null to leave Google sign-in off."
+  type        = string
+  default     = null
+}
+
+variable "google_client_secret" {
+  type      = string
+  default   = null
+  sensitive = true
+}
+
+variable "microsoft_client_id" {
+  description = "Application (client) id from the Entra app registration. Leave null to leave Microsoft sign-in off."
+  type        = string
+  default     = null
+}
+
+variable "microsoft_client_secret" {
+  type      = string
+  default   = null
+  sensitive = true
+}
+
+variable "microsoft_tenant_id" {
+  description = "The one Entra tenant whose accounts can sign in. 9188040d-6c67-4c5b-b112-36a304b66dad is personal Microsoft accounts."
+  type        = string
+  default     = null
+}
+
+variable "email_domain" {
+  description = "Domain to send sign-in emails from through SES. Leave null to use Cognito's own sender (about 50 a day)."
+  type        = string
+  default     = null
+}
+
+variable "email_domain_verified" {
+  description = "Set true once SES shows email_domain as verified."
+  type        = bool
+  default     = false
+}

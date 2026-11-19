@@ -34,5 +34,17 @@ alarm_email_addresses = ["you@uw.edu"]
 
 github_repository = "t-nair/automated-accessibility-enhancer"
 
+# Sign-in (see "Sign-in" in infra/README.md). Email and password work with none
+# of these set; each provider turns on once its id is set.
+public_url            = "https://accessibilityenhancer.com/app"
+cognito_domain_prefix = "accessibility-enhancer"
+# google_client_id        = ""
+# google_client_secret    = ""
+# microsoft_client_id     = ""
+# microsoft_client_secret = ""
+# microsoft_tenant_id     = "9188040d-6c67-4c5b-b112-36a304b66dad"
+# email_domain            = "accessibilityenhancer.com"
+# email_domain_verified   = false
+
 # Set to false if this AWS account already has a GitHub OIDC provider.
 create_oidc_provider = true

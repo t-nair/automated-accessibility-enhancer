@@ -49,3 +49,22 @@ output "submissions_table_name" {
   description = "The DynamoDB table holding submissions."
   value       = module.submissions.table_name
 }
+
+output "cognito_user_pool_id" {
+  value = module.auth.user_pool_id
+}
+
+output "cognito_sign_in_domain" {
+  description = "Where the sign-in pages are served."
+  value       = module.auth.domain_url
+}
+
+output "cognito_identity_provider_redirect_uri" {
+  description = "The redirect URI to register in the Google and Microsoft apps."
+  value       = module.auth.identity_provider_redirect_uri
+}
+
+output "email_dkim_records" {
+  description = "CNAME records to add in Cloudflare (DNS only) so SES can send from email_domain."
+  value       = module.auth.email_dkim_records
+}
