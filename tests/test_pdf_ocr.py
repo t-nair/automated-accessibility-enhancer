@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from importlib.util import find_spec
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -107,6 +108,8 @@ class OcrPolicyTests(unittest.TestCase):
         self.assertIn("No text recognized", result.review_reasons[-1])
 
 
+# rapidocr-onnxruntime has no Python 3.13 build, so it is not installed there (#87)
+@unittest.skipUnless(find_spec("rapidocr_onnxruntime"), "rapidocr-onnxruntime is not installed")
 class OcrIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

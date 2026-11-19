@@ -16,7 +16,7 @@ pycparser==3.0
 pypdf==6.10.0
 pypdfium2==4.30.0
 PyYAML==6.0.3
-rapidocr-onnxruntime==1.4.4
+rapidocr-onnxruntime==1.4.4; python_version < "3.13"
 shapely==2.1.2
 six==1.17.0
 tqdm==4.70.0
