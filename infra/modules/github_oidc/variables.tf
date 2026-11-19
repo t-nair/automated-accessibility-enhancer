@@ -42,3 +42,26 @@ variable "max_session_duration" {
   type        = number
   default     = 3600
 }
+
+variable "apply_role_name" {
+  description = "Name of the role the deploy job assumes to run terraform apply. Leave null for no such role, so CI can only plan."
+  type        = string
+  default     = null
+}
+
+variable "apply_subjects" {
+  description = "OIDC subjects the apply role trusts. Leave null to trust only jobs that use the repository's production environment."
+  type        = list(string)
+  default     = null
+}
+
+variable "managed_role_prefix" {
+  description = "The apply role may only create, change and pass IAM roles whose names start with this, for example \"aae-dev-\"."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.apply_role_name == null || length(var.managed_role_prefix) > 0
+    error_message = "Set managed_role_prefix when apply_role_name is set, or the apply role could change every role in the account."
+  }
+}

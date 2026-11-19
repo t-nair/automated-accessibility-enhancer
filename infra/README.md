@@ -18,10 +18,10 @@ and on AWS it keeps them in DynamoDB and leaves the work to the Lambda.
 | `modules/s3_buckets` | The uploads and processed buckets, both with lifecycle expiry. |
 | `modules/ecr` | The registries the two container images are pushed to, one each for the pipeline and the website. |
 | `modules/dynamodb` | The table of submissions, which replaces the sqlite file the local version uses. |
-| `modules/apprunner` | The website itself, and the permissions it runs with. |
+| `modules/ecs_web` | The website itself on ECS Express Mode, which brings its own load balancer and HTTPS certificate, and the permissions it runs with. |
 | `modules/lambda` | The function, its execution role, and the S3 trigger. |
 | `modules/observability` | Log group with a retention period, an SNS topic, and four alarms. |
-| `modules/github_oidc` | A role GitHub Actions assumes to run `terraform plan` without an access key. |
+| `modules/github_oidc` | Two roles GitHub Actions assumes without an access key: one to run `terraform plan` on pull requests, one to deploy from `main`. |
 | `envs/dev` | One of everything, wired together. Copy the directory to add an environment. |
 
 ### Why the buckets expire
@@ -40,6 +40,9 @@ periods are variables if they turn out to be wrong.
   replaced the separate DynamoDB lock table, and needs 1.11.
 - AWS credentials with permission to create the resources above.
 - Docker, to build the Lambda image.
+- A default VPC in the region, which the website runs in. An account without
+  one (some university accounts) sets `web_subnet_ids` to two or more subnets
+  instead.
 - Bedrock working for the account. The Model access page has been retired, and
   models now enable themselves when first used, but Anthropic ones need a use
   case form submitting once, and a new account can be left with every Bedrock
@@ -81,7 +84,7 @@ repository.
 
 ### 3. Create the registries first
 
-Lambda and App Runner cannot be created pointing at images that do not exist
+Lambda and ECS cannot be created pointing at images that do not exist
 yet, so the registries and the images come before everything else:
 
 ```bash
@@ -133,8 +136,8 @@ terraform apply
 
 ### 6. Open the site
 
-`terraform output website_url` is the address App Runner serves it on, with its
-own HTTPS certificate. Uploading a deck there exercises the whole thing: the
+`terraform output website_url` is the address ECS serves it on, with its own
+HTTPS certificate. Uploading a deck there exercises the whole thing: the
 site puts it in the uploads bucket, the bucket starts the Lambda, the Lambda
 writes its progress to the table, and the page follows along.
 
@@ -152,42 +155,105 @@ nothing appears, the log group named in the outputs will say why.
 
 ## Deploying a change
 
+Merging to `main` deploys it (see *CI* below). The workflow builds both images,
+tags them with the commit, and runs `terraform apply -var image_tag=<commit>`,
+which moves the Lambda and the website onto them together. Every deploy is then
+a commit you can name, and rolling back is re-running the deploy of an older
+one.
+
+By hand, the same thing is to build and push both images under one tag, the
+pipeline from `Dockerfile` to `ecr_repository_url` and the website from
+`Dockerfile.web` to `web_repository_url`:
+
 ```bash
-docker build --platform linux/amd64 -t <repo-url>:latest .
-docker push <repo-url>:latest
-aws lambda update-function-code --function-name <function_name> --image-uri <repo-url>:latest
+docker build --provenance=false --platform linux/amd64 -t <repo-url>:<tag> .
+docker push <repo-url>:<tag>
 ```
 
-Terraform does not need to run for a code-only change, because the image tag it
-points at has not changed.
+and then:
 
-This is also the weakness of using `latest`: two different images can carry the
-tag over time and nothing records which one is deployed. Moving `image_tag` to a
-build number or an image digest is the fix, and is worth doing before this is
-used for real.
+```bash
+terraform apply -var image_tag=<tag>
+```
 
 ---
 
 ## CI
 
-`modules/github_oidc` creates a role that GitHub Actions assumes through OIDC,
-so no AWS access key is ever stored in the repository. GitHub mints a
-short-lived token for the workflow run and AWS trades it for temporary
-credentials.
+`modules/github_oidc` creates two roles that GitHub Actions assumes through
+OIDC, so no AWS access key is ever stored in the repository or handed to a
+developer. GitHub mints a short-lived token for the workflow run and AWS trades
+it for temporary credentials.
 
-The role can plan but not apply. It gets `ReadOnlyAccess` plus the S3 writes the
-backend needs to take and release its lock — a plan is not read-only against the
-backend, it writes a lock file while it runs. It is also explicitly denied
-`s3:GetObject` on the uploads and processed buckets, because `ReadOnlyAccess`
-would otherwise let a workflow download real course material, and a plan has no
-reason to read a deck.
+- **The plan role** (`github_actions_role_arn`) can plan but not apply. It gets
+  `ReadOnlyAccess` plus the S3 writes the backend needs to take and release its
+  lock. Any workflow in the repository may assume it.
+- **The apply role** (`github_actions_apply_role_arn`) can push images and run
+  `terraform apply`. Only a job using the repository's `production` environment
+  may assume it, so pull requests and branches never can. It gets
+  `PowerUserAccess` and IAM read access, and may only create, change and pass
+  roles whose names start with `aae-dev-`.
 
-Applying from CI would need a second role with permissions to match, added
-deliberately rather than by widening this one.
+Both are explicitly denied `s3:GetObject` on the uploads and processed buckets,
+because their broad policies would otherwise let a workflow download real
+course material, and neither has a reason to read a deck.
 
-The workflow side is a job with `permissions: id-token: write` using
-`aws-actions/configure-aws-credentials` with the `github_actions_role_arn`
-output as `role-to-assume`. That workflow is not in the repository yet.
+A role that can make roles can, in effect, give itself more, so the apply role
+is only as safe as the `production` environment. Required reviewers on it are
+what stop a merge from deploying without someone saying yes.
+
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs:
+
+| Job | When | What |
+|---|---|---|
+| `terraform-check` | every push and pull request | `terraform fmt -check` and `terraform validate`, with no AWS access |
+| `plan` | pull requests from this repository | `terraform plan`, written to the job summary |
+| `deploy` | pushes to `main`, after approval | builds and pushes both images, then `terraform apply` |
+
+`plan` and `deploy` are skipped until the repository is set up for them.
+
+### Setting CI up
+
+After the first `terraform apply` by hand (above), in the repository's
+**Settings**:
+
+1. **Environments → New environment** named `production`. Add the people who
+   may approve a deploy as required reviewers, and limit it to the `main`
+   branch.
+2. **Secrets and variables → Actions → Variables**:
+   - `AWS_PLAN_ROLE_ARN`: `terraform output -raw github_actions_role_arn`
+   - `AWS_APPLY_ROLE_ARN`: `terraform output -raw github_actions_apply_role_arn`
+   - `TF_STATE_BUCKET`: the bucket from step 1
+   - `AWS_REGION`: only if it is not `us-east-1`
+3. **Secrets and variables → Actions → Secrets**: `TFVARS`, holding the whole
+   of your `terraform.tfvars`. It is a secret because it carries the alarm
+   email addresses.
+4. **Branches**: protect `main` so a change needs a pull request, a review and
+   passing checks.
+
+Developers then need nothing from AWS to ship a change. They open a pull
+request, it is reviewed and merged, and the deploy waits for an approver.
+
+---
+
+## Giving people access to the AWS console
+
+Use IAM Identity Center rather than IAM users, so nobody holds a long-lived
+access key. If the account belongs to the university, ask UW-IT first: it may
+already sign people in to AWS with their NetID, and then you only ask for them
+to be assigned.
+
+Otherwise, in IAM Identity Center, create a group for each kind of person and
+give each a permission set on this account:
+
+- **Viewers**: `ReadOnlyAccess`, plus an inline policy denying `s3:GetObject` on
+  the uploads and processed buckets, for the same reason as the CI roles.
+- **Developers**: viewer access plus what investigating takes, such as
+  CloudWatch Logs Insights queries. Deploying goes through CI, not the console.
+- **Administrators**: one or two people.
+
+Everyone signs in at the Identity Center portal and gets short-lived
+credentials for the group they are in.
 
 ---
 
@@ -223,9 +289,11 @@ These are deliberate, not oversights:
   once, read the resource off the CloudTrail event, then narrow the variable.
 - **Dependencies are unpinned.** `requirements.txt` has no versions, so two
   builds of the same commit can differ. Worth pinning before this is relied on.
-- **`image_tag` defaults to `latest`.** See the note under *Deploying a change*.
+- **`image_tag` defaults to `latest`.** CI always passes the commit, so this
+  only matters for an apply by hand.
 - **No `terraform plan` has been run against these files.** They were written
-  without Terraform installed locally, so they are unvalidated. Expect to fix
-  something on the first `terraform init && terraform validate`.
+  without an AWS account to plan against. They pass `terraform validate` with
+  the AWS provider 6.73, and the `terraform-check` CI job keeps checking that,
+  but only a real plan proves the IAM is right.
 - **The Flask app does not use any of this.** It still processes files on
   whichever machine it runs on. Connecting it to the buckets is separate work.

@@ -10,3 +10,8 @@ output "role_name" {
 output "oidc_provider_arn" {
   value = local.provider_arn
 }
+
+output "apply_role_arn" {
+  description = "Role the deploy job assumes, or null when there is none."
+  value       = one(aws_iam_role.apply[*].arn)
+}

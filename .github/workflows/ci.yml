@@ -3,6 +3,18 @@ on:
   pull_request:
   push:
     branches: [main]
+
+# one deploy at a time, and never cancel one halfway through an apply
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && 'deploy' || github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  TF_DIR: infra/envs/dev
+  # ECR repository names, as infra/envs/dev names them
+  NAME_PREFIX: aae-dev
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -13,3 +25,90 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: python -m playwright install --with-deps chromium
       - run: python -m pytest tests/ -q
+
+  # Checks the Terraform is well formed. Needs no AWS access, so it runs on
+  # every pull request, forks included.
+  terraform-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "~1.11", terraform_wrapper: false }
+      - run: terraform fmt -check -recursive infra
+      - run: terraform -chdir=$TF_DIR init -backend=false -input=false
+      - run: terraform -chdir=$TF_DIR validate
+
+  # Shows what a pull request would change in AWS, in the job summary. Uses the
+  # read-only plan role. Skipped for forks, which GitHub gives no AWS token, and
+  # until the AWS_PLAN_ROLE_ARN variable is set.
+  plan:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      vars.AWS_PLAN_ROLE_ARN != ''
+    needs: [test, terraform-check]
+    runs-on: ubuntu-latest
+    permissions: { id-token: write, contents: read }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "~1.11", terraform_wrapper: false }
+      - name: Write terraform.tfvars
+        run: printf '%s\n' "$TFVARS" > $TF_DIR/terraform.tfvars
+        env: { TFVARS: "${{ secrets.TFVARS }}" }
+      - run: terraform -chdir=$TF_DIR init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+      # main's images are what is running, since every push to main deploys
+      # them, so the plan shows only what this pull request changes
+      - name: Plan
+        run: |
+          terraform -chdir=$TF_DIR plan -input=false -no-color \
+            -var "image_tag=${{ github.event.pull_request.base.sha }}" > plan.txt
+          { echo '```'; cat plan.txt; echo '```'; } >> $GITHUB_STEP_SUMMARY
+
+  # Builds both images, pushes them tagged with the commit, and runs terraform
+  # apply with that tag, which updates the Lambda and the website together.
+  # Uses the apply role, which only a job in the "production" environment can
+  # assume, so set required reviewers on that environment to hold each deploy
+  # for approval.
+  deploy:
+    if: github.event_name == 'push' && vars.AWS_APPLY_ROLE_ARN != ''
+    needs: [test, terraform-check]
+    runs-on: ubuntu-latest
+    environment: production
+    permissions: { id-token: write, contents: read }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # --provenance=false keeps each image a single manifest. Lambda refuses
+      # the manifest list an attestation would turn it into.
+      - name: Build and push the images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ github.sha }}
+        run: |
+          docker build --provenance=false --platform linux/amd64 \
+            -t $REGISTRY/$NAME_PREFIX-pipeline:$TAG -f Dockerfile .
+          docker build --provenance=false --platform linux/amd64 \
+            -t $REGISTRY/$NAME_PREFIX-web:$TAG -f Dockerfile.web .
+          docker push $REGISTRY/$NAME_PREFIX-pipeline:$TAG
+          docker push $REGISTRY/$NAME_PREFIX-web:$TAG
+
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "~1.11", terraform_wrapper: false }
+      - name: Write terraform.tfvars
+        run: printf '%s\n' "$TFVARS" > $TF_DIR/terraform.tfvars
+        env: { TFVARS: "${{ secrets.TFVARS }}" }
+      - run: terraform -chdir=$TF_DIR init -input=false -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+      - run: terraform -chdir=$TF_DIR apply -input=false -auto-approve -var "image_tag=${{ github.sha }}"
+      - name: Website address
+        run: echo "Deployed ${{ github.sha }} to $(terraform -chdir=$TF_DIR output -raw website_url)" >> $GITHUB_STEP_SUMMARY

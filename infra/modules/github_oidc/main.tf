@@ -1,12 +1,12 @@
-# The role GitHub Actions assumes to run terraform plan.
+# The roles GitHub Actions assumes to run terraform plan and terraform apply.
 #
 # The point of this module is that CI never holds an AWS access key. GitHub
 # mints a short-lived token for the workflow run, AWS trades it for temporary
 # credentials, and nothing long-lived is ever stored in the repository.
 #
-# The role can plan, not apply: it gets read access plus the writes the S3
-# backend needs to take and release its lock. An apply from CI would need its
-# own role with the permissions to match, added deliberately.
+# The plan role can plan, not apply: it gets read access plus the writes the S3
+# backend needs to take and release its lock. Applying from CI uses the separate
+# apply role further down, which only one GitHub Environment can assume.
 
 terraform {
   required_version = ">= 1.11"
@@ -136,4 +136,139 @@ resource "aws_iam_role_policy" "state_access" {
   name   = "${var.role_name}-state"
   role   = aws_iam_role.plan.id
   policy = data.aws_iam_policy_document.state_access.json
+}
+
+# --- the role the deploy job assumes to push images and run terraform apply ---
+#
+# Only made when apply_role_name is set. It trusts one GitHub Environment, not
+# the whole repository, so a pull request or a branch can never assume it: only
+# a job that names that environment, which GitHub can hold for a reviewer's
+# approval first.
+#
+# It can do a lot, because applying this configuration means creating buckets,
+# a function, a service and IAM roles. Creating roles is the sharp part: a role
+# that can make roles and pass them to Lambda can, in effect, give itself more.
+# Its IAM writes are limited to roles under managed_role_prefix, but the real
+# guard is who may approve the environment.
+
+locals {
+  apply_subjects = coalesce(var.apply_subjects, ["repo:${var.github_repository}:environment:production"])
+}
+
+data "aws_iam_policy_document" "assume_apply" {
+  count = var.apply_role_name == null ? 0 : 1
+
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [local.provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${local.oidc_hostname}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringLike"
+      variable = "${local.oidc_hostname}:sub"
+      values   = local.apply_subjects
+    }
+  }
+}
+
+resource "aws_iam_role" "apply" {
+  count = var.apply_role_name == null ? 0 : 1
+
+  name               = var.apply_role_name
+  description        = "Assumed by the GitHub Actions deploy job to push images and run terraform apply."
+  assume_role_policy = data.aws_iam_policy_document.assume_apply[0].json
+
+  max_session_duration = var.max_session_duration
+}
+
+# everything except IAM, which comes from the two below instead
+resource "aws_iam_role_policy_attachment" "apply_power_user" {
+  count = var.apply_role_name == null ? 0 : 1
+
+  role       = aws_iam_role.apply[0].name
+  policy_arn = "arn:aws:iam::aws:policy/PowerUserAccess"
+}
+
+# reading IAM is how a plan finds out what the roles look like now
+resource "aws_iam_role_policy_attachment" "apply_iam_read" {
+  count = var.apply_role_name == null ? 0 : 1
+
+  role       = aws_iam_role.apply[0].name
+  policy_arn = "arn:aws:iam::aws:policy/IAMReadOnlyAccess"
+}
+
+data "aws_iam_policy_document" "apply" {
+  count = var.apply_role_name == null ? 0 : 1
+
+  statement {
+    sid    = "ManageThisProjectsRoles"
+    effect = "Allow"
+
+    actions = [
+      "iam:CreateRole",
+      "iam:DeleteRole",
+      "iam:UpdateRole",
+      "iam:UpdateRoleDescription",
+      "iam:UpdateAssumeRolePolicy",
+      "iam:TagRole",
+      "iam:UntagRole",
+      "iam:PutRolePolicy",
+      "iam:DeleteRolePolicy",
+      "iam:AttachRolePolicy",
+      "iam:DetachRolePolicy",
+      "iam:PassRole",
+    ]
+
+    resources = ["arn:aws:iam::*:role/${var.managed_role_prefix}*"]
+  }
+
+  statement {
+    sid    = "ManageTheGitHubProvider"
+    effect = "Allow"
+
+    actions = [
+      "iam:CreateOpenIDConnectProvider",
+      "iam:DeleteOpenIDConnectProvider",
+      "iam:TagOpenIDConnectProvider",
+      "iam:UntagOpenIDConnectProvider",
+      "iam:UpdateOpenIDConnectProviderThumbprint",
+      "iam:AddClientIDToOpenIDConnectProvider",
+      "iam:RemoveClientIDFromOpenIDConnectProvider",
+    ]
+
+    resources = ["arn:aws:iam::*:oidc-provider/${local.oidc_hostname}"]
+  }
+
+  # the same reason as the plan role: PowerUserAccess would let a workflow
+  # download real course material, and deploying never needs to read a deck
+  dynamic "statement" {
+    for_each = length(var.deny_object_read_bucket_arns) > 0 ? [1] : []
+
+    content {
+      sid    = "NeverReadUploadedDecks"
+      effect = "Deny"
+
+      actions = ["s3:GetObject"]
+
+      resources = [for arn in var.deny_object_read_bucket_arns : "${arn}/*"]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "apply" {
+  count = var.apply_role_name == null ? 0 : 1
+
+  name   = "${var.apply_role_name}-iam"
+  role   = aws_iam_role.apply[0].id
+  policy = data.aws_iam_policy_document.apply[0].json
 }

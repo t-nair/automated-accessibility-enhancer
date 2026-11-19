@@ -5,7 +5,7 @@ which runs on Windows and Linux. Everything runs on the server itself except ima
 descriptions: each picture that needs one is sent to Claude on Amazon Bedrock.
 
 This guide is for one server you run yourself. For Render, see [render.yaml](../render.yaml);
-for AWS (S3, DynamoDB, Lambda and App Runner), see [infra/README.md](../infra/README.md).
+for AWS (S3, DynamoDB, Lambda and ECS), see [infra/README.md](../infra/README.md).
 
 The [open decisions](#open-decisions) at the end still need an owner before this runs
 anywhere real.
