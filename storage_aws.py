@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import logging
 from datetime import datetime, timedelta
@@ -301,6 +302,18 @@ def read_report(submission):
 
 # the browser fetches the deck from S3 itself, so a 250 MB download never goes
 # through the web server
+def read_report_data(submission):
+    if not submission["alt_text_filename"]:
+        return None
+
+    try:
+        answer = get_s3().get_object(Bucket=PROCESSED_BUCKET, Key=submission["alt_text_filename"] + ".json")
+        return json.loads(answer["Body"].read().decode("utf-8"))
+    except Exception:
+        # older submissions and PDFs have no report data, and the page copes
+        return None
+
+
 def send_processed_file(submission):
     names = processed_names(submission["saved_filename"])
     # the result is always a .pptx, even when an old .ppt was uploaded

@@ -1,3 +1,4 @@
+import io
 import os
 import json
 import time
@@ -8,7 +9,7 @@ import secrets
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, send_file
 from werkzeug.utils import secure_filename
 from z_reorder import process_one_file, severity_summary
 
@@ -526,6 +527,7 @@ def details(submission_id):
         return redirect(url_for("status"))
 
     report_text = "No report is available for this submission."
+    report = None
 
     if matching_submission.get("alt_text_filename"):
         saved_report = storage.read_report(matching_submission)
@@ -535,7 +537,12 @@ def details(submission_id):
         else:
             logging.error(f"Details page for submission {submission_id} expected a report, but it could not be read.")
 
-    return render_template("details.html", submission=matching_submission, report_text=report_text)
+        # the same findings arranged by slide. A PDF, or anything processed before
+        # this existed, has none, and the page shows the text report instead.
+        report = storage.read_report_data(matching_submission)
+
+    return render_template("details.html", submission=matching_submission,
+                           report_text=report_text, report=report)
 
 
 @app.route("/progress/<submission_id>")
@@ -611,6 +618,33 @@ def delete(submission_id):
     flash(f"Deleted {submission['original_filename']}.")
 
     return redirect(url_for("status"))
+
+
+@app.route("/report/<submission_id>")
+def download_report(submission_id):
+    matching_submission = get_my_submission(submission_id)
+
+    if matching_submission is None:
+        logging.warning(f"Report requested for a submission that is unknown or belongs to someone else: {submission_id}")
+        flash("That submission could not be found.")
+        return redirect(url_for("status"))
+
+    report_text = storage.read_report(matching_submission)
+
+    if report_text is None:
+        flash("There is no report to download for that submission.")
+        return redirect(url_for("details", submission_id=submission_id))
+
+    # the report is written without an extension, so give the download a .txt one
+    # for the sake of whoever opens it
+    # control characters would make the header invalid, so they are dropped
+    stem = "".join(c for c in os.path.splitext(matching_submission["original_filename"])[0] if c.isprintable())
+    filename = (stem or "presentation") + "_accessibility_report.txt"
+
+    # send_file quotes and encodes the name itself, so a quote or an accented
+    # letter in the uploaded name cannot break the header
+    return send_file(io.BytesIO(report_text.encode("utf-8")), mimetype="text/plain",
+                     as_attachment=True, download_name=filename)
 
 
 @app.route("/download/<submission_id>")
