@@ -6,8 +6,9 @@
 # (managed login) and gets them back with an authorization code, the usual OIDC
 # flow. Accounts are keyed by Cognito's `sub`, never by email (see #77).
 #
-# Google and Microsoft are each added only once their client id is set, so the
-# pool works with email and password alone until those apps are registered.
+# Google is added only once its client id is set, so the pool works with email
+# and password alone until that app is registered. Microsoft is left off for now
+# (#77): Cognito can only sign in one Entra tenant per provider.
 
 terraform {
   required_version = ">= 1.11"
@@ -24,14 +25,9 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 locals {
-  google_enabled    = var.google_client_id != null
-  microsoft_enabled = var.microsoft_client_id != null
+  google_enabled = var.google_client_id != null
 
-  identity_providers = concat(
-    ["COGNITO"],
-    local.google_enabled ? ["Google"] : [],
-    local.microsoft_enabled ? ["Microsoft"] : [],
-  )
+  identity_providers = concat(["COGNITO"], local.google_enabled ? ["Google"] : [])
 
   # Cognito's sender allows about 50 emails a day, which a real launch would run
   # through in an afternoon. SES takes over once its domain is verified.
@@ -87,6 +83,15 @@ resource "aws_cognito_user_pool_domain" "this" {
   managed_login_version = 2
 }
 
+# The secret is put in Parameter Store by hand (see infra/README.md), so it never
+# passes through GitHub. Terraform still keeps a copy in its state, because
+# Cognito's provider_details is stored there; the state bucket guards it.
+data "aws_ssm_parameter" "google_client_secret" {
+  count = local.google_enabled ? 1 : 0
+
+  name = var.google_client_secret_parameter_name
+}
+
 resource "aws_cognito_identity_provider" "google" {
   count = local.google_enabled ? 1 : 0
 
@@ -96,7 +101,7 @@ resource "aws_cognito_identity_provider" "google" {
 
   provider_details = {
     client_id        = var.google_client_id
-    client_secret    = var.google_client_secret
+    client_secret    = data.aws_ssm_parameter.google_client_secret[0].value
     authorize_scopes = "openid email profile"
   }
 
@@ -105,35 +110,6 @@ resource "aws_cognito_identity_provider" "google" {
     email          = "email"
     email_verified = "email_verified"
     name           = "name"
-  }
-}
-
-# Microsoft over OIDC, for one Entra tenant. Cognito checks the token's issuer
-# against this exact URL, and Microsoft's multi-tenant "common" and
-# "organizations" endpoints put each tenant's own id in the issuer, so they fail
-# that check. One tenant per provider is what works: UW's tenant for UW
-# Microsoft accounts, or 9188040d-6c67-4c5b-b112-36a304b66dad for personal ones.
-resource "aws_cognito_identity_provider" "microsoft" {
-  count = local.microsoft_enabled ? 1 : 0
-
-  user_pool_id  = aws_cognito_user_pool.this.id
-  provider_name = "Microsoft"
-  provider_type = "OIDC"
-
-  provider_details = {
-    client_id                 = var.microsoft_client_id
-    client_secret             = var.microsoft_client_secret
-    oidc_issuer               = "https://login.microsoftonline.com/${var.microsoft_tenant_id}/v2.0"
-    authorize_scopes          = "openid email profile"
-    attributes_request_method = "GET"
-  }
-
-  # no email_verified: Microsoft does not vouch for the email claim in every
-  # tenant (the "nOAuth" problem), so these addresses stay unverified
-  attribute_mapping = {
-    username = "sub"
-    email    = "email"
-    name     = "name"
   }
 }
 
@@ -157,10 +133,7 @@ resource "aws_cognito_user_pool_client" "web" {
   prevent_user_existence_errors = "ENABLED"
   enable_token_revocation       = true
 
-  depends_on = [
-    aws_cognito_identity_provider.google,
-    aws_cognito_identity_provider.microsoft,
-  ]
+  depends_on = [aws_cognito_identity_provider.google]
 }
 
 # Cognito's default look for the sign-in pages. Without a style, managed login
