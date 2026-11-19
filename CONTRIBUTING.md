@@ -40,11 +40,22 @@ Then put decks in `pptx_input/` and run:
 python z_reorder.py
 ```
 
-See the [README](README.md) for the web page, the PDF pipeline and the tests.
+See the [README](README.md) for the web app, and [docs/](docs/README.md) for everything else.
 
 ---
 
 ## Testing Expectations
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests/ -q
+```
+
+About 200 tests cover title detection, every report check, whole-folder runs, every page, route and error of the web app, CSRF, restart recovery, and the PDF and OCR pipeline. Bedrock is replaced with a stand-in, and S3 and DynamoDB with moto, so they run in seconds without AWS credentials. The sample decks in `Error Test PPTX/` are rebuilt by [generate_test_pptx.py](generate_test_pptx.py) at the start of each run.
+
+[tests/test_axe.py](tests/test_axe.py) loads every page and state from [docs/accessibility-audit.md](docs/accessibility-audit.md) in headless Chromium and fails on any axe-core violation. It needs Chromium once (`python -m playwright install chromium`) and downloads axe-core from cdnjs; without Playwright it is skipped locally, never in CI.
+
+GitHub Actions runs them on every pull request and push to `main` ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
 
 Every PR must explain how it was tested.
 

@@ -2,93 +2,24 @@
 
 [![Tests](https://github.com/t-nair/automated-accessibility-enhancer/actions/workflows/ci.yml/badge.svg)](https://github.com/t-nair/automated-accessibility-enhancer/actions/workflows/ci.yml)
 
-Upload a PowerPoint or a PDF, get back a more accessible file and a report that says what was wrong with it.
+Upload a PowerPoint or a PDF, get back a more accessible file and a report that says what was wrong with it. Try it at [accessibilityenhancer.com](https://accessibilityenhancer.com).
 
-The Accessibility Enhancer fixes what it safely can (slide reading order, missing image descriptions, document language, PDF tags) and lists everything else a person needs to look at, scored by severity and mapped to WCAG 2.1. Everything runs on your own machine or server, except image descriptions: each picture that needs one is sent to Claude on Amazon Bedrock.
+The Accessibility Enhancer fixes what it safely can (slide reading order, missing image descriptions, document language, PDF tags) and lists everything else a person needs to look at, scored by severity and mapped to WCAG 2.1. Image descriptions are written by Claude on Amazon Bedrock.
 
 It was built as part of the **University of Washington Advancing Accessibility for Engineering Education** initiative, under the guidance of **Prof. Anant** and **Dr. Lalitha Subramanian**, and presented at **EDUCAUSE 2025 Online** as part of a broader effort to scale accessibility remediation in instructional materials.
 
 ---
 
-## Contents
-
-- [What it does](#what-it-does)
-- [The web app](#the-web-app)
-- [Quick start](#quick-start)
-- [Command line](#command-line)
-- [How a file is processed](#how-a-file-is-processed)
-- [Deploying](#deploying)
-- [Tests](#tests)
-- [Project layout](#project-layout)
-- [Things to know](#things-to-know)
-- [Roadmap](#roadmap)
-- [Contributing and contact](#contributing-and-contact)
-
----
-
 ## What it does
 
-### PowerPoint (`.pptx`, and `.ppt` through LibreOffice)
+- **PowerPoint** (`.pptx`, and `.ppt` through LibreOffice): fixes reading order, missing image descriptions and the presentation language; reports slides with no title, low contrast, small text and vague link text.
+- **PDF:** rebuilds digital text as a tagged PDF with a title and language, reads scanned pages with local OCR, and stops for a person whenever it is not sure.
+- **The report** scores the file as uploaded out of 100, lists every change before and after, and marks each problem critical, serious, moderate or minor with its WCAG criterion.
+- **The web app** queues uploads with live progress, explains failures in plain words, and has no WCAG 2.1 A or AA violations in an axe-core audit.
 
-| Check | WCAG 2.1 | What happens |
-|---|---|---|
-| Reading order | 1.3.2 | **Fixed** by role: the title first, then the subtitle, then the content in the author's order, then the date, footer and slide number. Titles typed into a text box are found by a small trained model ([title_research/](title_research/README.md)). A shape that sits above another but is read after it is reported. |
-| Images with no description | 1.1.1 | **Fixed.** Claude on Amazon Bedrock writes a description into the file. A filename (`photo.png`) or a generic name (`Picture 3`) counts as missing. Descriptions a person wrote are never overwritten. |
-| Presentation language | 3.1.1, 3.1.2 | **Fixed** when you pick a language on upload: set across every slide, master and layout. A missing, invalid or mixed language is always reported. |
-| Slides with no title | 2.4.2 | Reported, by slide. |
-| Low text contrast | 1.4.3 | Reported, with each ratio. Colours are resolved through the theme, the shape fill and the slide, layout and master backgrounds. |
-| Small text | 1.4.4 | Reported, including sizes inherited from the layout and master (below 9 pt by default). |
-| Vague link text | 2.4.4 | Reported: "click here", "read more", bare URLs, and linked pictures with no useful alt text. |
+"Reported" means the tool does not guess: a new title, colour or link wording is a design decision, left for a person. The full list, with an example report, is in [docs/what-it-checks.md](docs/what-it-checks.md).
 
-"Reported" means the tool does not guess: a new title, colour, font size or link wording is a design decision, so it is listed for a person to make. [docs/wcag-coverage.md](docs/wcag-coverage.md) covers all 50 Level A and AA criteria and what is, and is not, handled.
-
-### PDF
-
-Every page is inspected and routed as digital, scanned, hybrid or uncertain. Digital text is rebuilt as a **tagged PDF** with a title and language, including a conservative two-column reading order. Scanned and hybrid pages are read with local OCR and always marked for a person to check. Uncertain pages, signed or encrypted files and complex content stop for review rather than being silently rewritten. See [pipeline/README.md](pipeline/README.md) and [docs/OCR_PATHWAY.md](docs/OCR_PATHWAY.md).
-
-### The report
-
-Every file gets a report that opens with a score out of 100 for the file **as it was uploaded**, and the number of problems at each severity. Each problem is marked critical, serious, moderate or minor, with its WCAG criterion. An excerpt:
-
-```text
-Accessibility score: 77/100 (as uploaded)
-Issues by severity: 1 critical, 2 serious, 1 moderate, 1 minor
-
- Changes made (2):
- - Slide 2, reading order - before: Content Placeholder 2, Title 1, after: Title 1, Content Placeholder 2
- - Slide 3, Shape: Picture 3 - alt text before: 'IMG_0412.png', after: 'A bar chart comparing LED and incandescent efficiency.'
-
- Shape: Picture 3
- - Alt Text: A bar chart comparing LED and incandescent efficiency.
- - [critical] The image had no real description, so this one was generated. Check it (WCAG 1.1.1).
-
- [moderate] Title, subtitle or footer was out of reading order, now fixed (WCAG 1.3.2): slides 2
- [serious] Slides with no title (WCAG 2.4.2): 4
- [minor] Text below 9 pt (WCAG 1.4.4):
- - Slide 3, Shape: Footnote - 8 pt: 'Source: DOE 2024'
- [serious] Text with too little contrast (WCAG 1.4.3):
- - Slide 5, Shape: Subtitle - 2.31:1, needs 4.5:1: 'Week 3 overview'
-```
-
-Under the score, **Changes made** lists every change written into the fixed file (reading order, descriptions, table header rows, language) by slide, with the value before and after, so a reviewer can check each one.
-
-A critical problem costs 10 points, serious 5, moderate 2 and minor 1. Problems the tool fixed still count, so the score describes the original.
-
----
-
-## The web app
-
-The main way to use the tool. Drag in one or more `.pptx`, `.ppt` or `.pdf` files (up to 50 MB each), optionally pick the language, and the app:
-
-- queues them and shows a live progress bar for each one
-- lists every submission and its status on **Check Status**
-- shows the scored report on each file's page, with a download of the fixed file
-- explains any failure in plain words with steps to fix it, and offers **Try again**
-- lets you delete a submission and its files
-
-Each browser only sees its own submissions, every form is protected by a CSRF token, and if the server restarts, unfinished files are picked up again from their original uploads.
-
-The app itself has been audited with axe-core on every page and state: **no WCAG 2.1 Level A or AA violations** ([docs/accessibility-audit.md](docs/accessibility-audit.md)).
+![Production architecture](docs/architecture.svg)
 
 ---
 
@@ -120,111 +51,25 @@ On Windows, if `python` is not recognized, reinstall Python with "Add python.exe
 
 ---
 
-## Command line
+## Documentation
 
-### A folder of decks
+Everything else is in [docs/](docs/README.md):
 
-```bash
-python z_reorder.py                       # reads pptx_input/, writes pptx_output/
-python z_reorder.py my_decks fixed_decks  # or name the folders
-```
+- [What it checks and fixes](docs/what-it-checks.md), and [WCAG 2.1 coverage](docs/wcag-coverage.md)
+- [Command line](docs/command-line.md) for folders of decks and single PDFs
+- [How it works](docs/how-it-works.md), from upload to download
+- [Deploying](docs/deployment.md) on your own server, and how production runs on AWS ([infra/](infra/README.md))
+- [Contributing](CONTRIBUTING.md), including the tests
 
-Each deck gets an `_updated.pptx` and an `_alt_text` report. Originals are left where they are; add `--move-originals` to move each one into the output folder once it is done (an existing file there is never replaced).
-
-### A PDF
-
-```bash
-python -m pipeline.cli "input.pdf" --output-dir output/remediation
-```
-
-This writes a tagged PDF, an HTML companion and a JSON manifest. PDFs with images stop until each description is approved in a review file, which for now only the command line can do ([pipeline/README.md](pipeline/README.md)). On Windows, `./pipeline/setup.ps1 -Python python` sets up the environment in one step.
-
----
-
-## How a file is processed
-
-![Workflow overview](https://github.com/user-attachments/assets/46f6381d-969f-4e2f-aa14-19f6b2b116c3)
-
-1. The upload is saved, recorded in SQLite and put on the queue. The original is kept untouched, so retries and restarts can start again from it.
-2. A `.ppt` is converted to `.pptx` with LibreOffice. A `.pdf` goes to the PDF pipeline instead.
-3. Each slide is put in reading order: title, subtitle, content, then date, footer and slide number. A real title placeholder, or a shape named "title", is used when there is one; otherwise [title_detection.py](title_detection.py) picks the likely title from its size, position and wording. Running it again changes nothing.
-4. Every picture without usable alt text is described by Claude on Bedrock, using the slide's text as context.
-5. Language, missing titles, contrast, font size and link text are checked, and the language is set if one was chosen.
-6. The fixed file and the scored report, with every change listed before and after, are written to `processed/`.
-
----
-
-## Deploying
-
-![Production architecture: Cloudflare forwards accessibilityenhancer.com/app to the Flask website on AWS ECS, which saves decks to S3; a Lambda fixes them with Claude on Bedrock and records progress in DynamoDB](docs/architecture.svg)
-
-`python app.py` serves the app with [Waitress](https://docs.pylonsproject.org/projects/waitress/) on Windows or Linux. It must run as **one process**: the queue and the progress live in it. [docs/deployment.md](docs/deployment.md) covers the server it needs, environment variables, where data is kept, a systemd unit, nginx with HTTPS, how production runs on AWS, and the decisions still open (upload limits, retention, running more than one file at a time).
-
-- **Render:** [render.yaml](render.yaml) runs the site on Render's free plan with local storage. Set the Bedrock access key in the Render dashboard.
-- **AWS:** [infra/](infra/README.md) has the Terraform for S3, DynamoDB, a Lambda that processes decks and ECS Express Mode for the site, and CI deploys it on every merge to `main`. When `SUBMISSIONS_TABLE` is set, [app.py](app.py) uses [storage_aws.py](storage_aws.py) and leaves processing to [lambda_handler.py](lambda_handler.py). PDFs are not processed on AWS yet.
-
----
-
-## Tests
-
-```bash
-pip install -r requirements-dev.txt
-python -m pytest tests/ -q
-```
-
-About 200 tests cover title detection, every report check, whole-folder runs, every page, route and error of the web app, CSRF, restart recovery, and the PDF and OCR pipeline. Bedrock is replaced with a stand-in, and S3 and DynamoDB with moto, so they run in seconds without AWS credentials. The sample decks in `Error Test PPTX/` are rebuilt by [generate_test_pptx.py](generate_test_pptx.py) at the start of each run.
-
-[tests/test_axe.py](tests/test_axe.py) loads every page and state from [docs/accessibility-audit.md](docs/accessibility-audit.md) in headless Chromium and fails on any axe-core violation. It needs Chromium once (`python -m playwright install chromium`) and downloads axe-core from cdnjs; without Playwright it is skipped locally, never in CI.
-
-GitHub Actions runs them on every pull request and push to `main` ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
-
----
-
-## Project layout
-
-```
-app.py                  the web app: uploads, queue, status, reports, downloads
-storage_local.py        submissions in SQLite and folders (a laptop, Render)
-storage_aws.py          submissions in DynamoDB and S3 (AWS)
-lambda_handler.py       runs the PowerPoint pipeline in Lambda on AWS
-infra/                  Terraform for the AWS deployment
-z_reorder.py            the PowerPoint pipeline: conversion, titles, descriptions, every check, the report
-title_detection.py      finds the title of a slide with no title placeholder
-title_model.joblib      the small trained model it uses
-title_research/         how that model was chosen: data, experiments, results
-pipeline/               the PDF pipeline: page routing, OCR, image review, tagged PDF export
-templates/, static/     the web pages, stylesheet and script
-tests/                  the test suite
-generate_test_pptx.py   builds the sample decks the tests use
-docs/                   WCAG coverage, deployment, accessibility audit, research notes
-
-uploads/                original uploads (created at run time)
-processed/              fixed files and reports
-data/                   submissions.db and the cookie key
-pipeline.log            what happened to every file, including failures
-```
+Open work is tracked in [issues](https://github.com/t-nair/automated-accessibility-enhancer/issues).
 
 ---
 
 ## Things to know
 
-- **Descriptions are a starting point.** The model sometimes gets names and dates wrong, and has invented a label that was not in the picture. Every generated description is flagged in the report so it can be checked before a file reaches students.
-- **There is no login yet.** Each browser gets a random id in a signed cookie, and nobody can open someone else's files, even with the link. But clearing cookies loses your history, and a shared browser shares it. Sign-in with Amazon Cognito is planned ([#77](https://github.com/t-nair/automated-accessibility-enhancer/issues/77)).
-- **One file at a time** when the site runs the pipeline itself, so one large upload cannot hold up the server.
-- **"Permission denied" or "in use" errors** usually mean the deck is open in PowerPoint or a OneDrive or Dropbox sync is holding it. Close it or pause syncing and retry.
-- **Small-text cutoff:** set `MIN_FONT_PT` (for example `$env:MIN_FONT_PT=12`) before starting.
-
----
-
-## Roadmap
-
-- Approving PDF image descriptions on the web page, not only the command line
-- Sign-in with Amazon Cognito (email, Google, Microsoft; NetID later) instead of the cookie ([#77](https://github.com/t-nair/automated-accessibility-enhancer/issues/77))
-- A host for a shared deployment ([#102](https://github.com/t-nair/automated-accessibility-enhancer/issues/102)), upload limits ([#74](https://github.com/t-nair/automated-accessibility-enhancer/issues/74)) and file retention ([#78](https://github.com/t-nair/automated-accessibility-enhancer/issues/78))
-- Charts, SmartArt, grouped pictures and decorative images ([docs/wcag-coverage.md](docs/wcag-coverage.md))
-- HTML pages ([#41](https://github.com/t-nair/automated-accessibility-enhancer/issues/41))
-
-Open work is tracked in [issues](https://github.com/t-nair/automated-accessibility-enhancer/issues).
+- **Descriptions are a starting point.** The model sometimes gets names and dates wrong. Every generated description is flagged in the report so it can be checked before a file reaches students.
+- **There is no login yet.** Each browser gets a random id in a signed cookie, so nobody can open someone else's files, but clearing cookies loses your history. Sign-in with Amazon Cognito is in progress ([#77](https://github.com/t-nair/automated-accessibility-enhancer/issues/77)).
+- **"Permission denied" or "in use" errors** usually mean the deck is open in PowerPoint or a sync app is holding it. Close it and retry.
 
 ---
 

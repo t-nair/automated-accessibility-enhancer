@@ -1,8 +1,7 @@
 # PDF routing and local OCR pathway
 
-This document defines the command-line PDF pathway that is ready for the
-proposed branch. It is deliberately separate from the existing PowerPoint
-pipeline and does not require or add a website interface.
+This document defines the PDF pathway. It is separate from the PowerPoint
+pipeline.
 
 ## What is included
 
