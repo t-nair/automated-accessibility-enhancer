@@ -20,6 +20,7 @@ The [open decisions](#open-decisions) at the end still need an owner.
 | Host | AWS, `us-east-1`: the website on ECS Express Mode, decks processed by Lambda, files in S3, submissions in DynamoDB ([infra/](../infra/README.md)) |
 | Image descriptions | Claude on Amazon Bedrock, in the same AWS account. Local Qwen2-VL is no longer used (#97) |
 | Certificates | Cloudflare issues and renews the one for `accessibilityenhancer.com`. ECS Express Mode issues and renews the one for its own `*.ecs.us-east-1.on.aws` address. Nobody renews anything by hand |
+| Sign-in | Amazon Cognito, being built in #77: email and password, Google and Microsoft, NetID later. A visitor gets one run without an account and is then asked to sign in or create one |
 | Deploys | Every merge to `main`, from CI, after a reviewer approves the `production` environment |
 
 The project site ([automated-accessibility-enhancer-site](https://github.com/t-nair/automated-accessibility-enhancer-site))
@@ -27,8 +28,10 @@ is on Cloudflare Pages. A Pages Function there forwards `/app` to the ECS addres
 sends `X-Forwarded-Prefix: /app`, so links in the app point back under `/app`.
 
 The ECS address can also be reached directly, so the Cloudflare proxy cannot be what keeps
-people out. Sign-in has to be checked in the app itself (#77), and the AWS load balancer
-cannot do it either, because ECS Express Mode manages that load balancer itself.
+people out. The app itself checks sign-in against the Cognito user pool (#77). The AWS
+load balancer can't do it, because ECS Express Mode manages that load balancer itself.
+Without Cognito configured (on a laptop, or a server of your own) the app keeps
+identifying visitors by a signed cookie, as it does today.
 
 Files are not on a server disk in production. Uploads and results are in S3 and expire on
 their own (uploads after 7 days, results after 30), and submissions are in DynamoDB. See
@@ -233,18 +236,17 @@ that asks the person to upload it again.
 
 These are not settled in the code or the repository and need someone to decide:
 
-1. **Who can use it.** There is no login yet; anyone who can reach the site can upload.
-   The plan is the app's own sign-in (email and password, Google, Microsoft) while NetID is
-   discussed with UW IT (#77): a visitor can run one deck without an account and is then
-   asked to sign in or create one. Open sign-up still lets anyone in, so whether to limit
-   accounts to certain email domains until NetID is still to be decided. (#102)
+1. **Who can use it.** Sign-in is Amazon Cognito (#77). Open sign-up still lets anyone
+   create an account, so whether to limit sign-up to certain email domains (a Cognito
+   pre sign-up trigger) until NetID is available is still to be decided. Until #77 ships
+   there is no login, and anyone who can reach the site can upload. (#102)
 2. **Who runs it.** Who owns the AWS account, approves production deploys, and watches
    the bill and the alarms is not written down. (#102)
 3. **Backups.** Nothing is backed up yet. The buckets have no versioning, so a deleted or
    overwritten file cannot be recovered, and `submissions_point_in_time_recovery` is off
    by default. The plan is S3 versioning with old versions removed after a few days, and
    point-in-time recovery on for the submissions table (restore to any second in the last
-   35 days). Any backup must still respect the retention period in decision 5. (#102)
+   35 days). Any backup must still respect the retention period in decision 5. (#136)
 4. **Upload limits.** Each file may be 50 MB (`MAX_FILE_SIZE_MB`) and one upload 250 MB
    (`MAX_REQUEST_SIZE_MB`). Cloudflare refuses request bodies over 100 MB on its Free and
    Pro plans, so through `accessibilityenhancer.com/app` one upload is in practice limited

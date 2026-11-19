@@ -156,7 +156,7 @@ This writes a tagged PDF, an HTML companion and a JSON manifest. PDFs with image
 
 ## Deploying
 
-`python app.py` serves the app with [Waitress](https://docs.pylonsproject.org/projects/waitress/) on Windows or Linux. It must run as **one process**: the queue and the progress live in it. [docs/deployment.md](docs/deployment.md) covers the server it needs, environment variables, where data is kept, a systemd unit, nginx with HTTPS, and the decisions still open (host, sign-in, upload limits, retention).
+`python app.py` serves the app with [Waitress](https://docs.pylonsproject.org/projects/waitress/) on Windows or Linux. It must run as **one process**: the queue and the progress live in it. [docs/deployment.md](docs/deployment.md) covers the server it needs, environment variables, where data is kept, a systemd unit, nginx with HTTPS, how production runs on AWS, and the decisions still open (sign-up limits, backups, upload limits, retention).
 
 - **Render:** [render.yaml](render.yaml) runs the site on Render's free plan with local storage. Set the Bedrock access key in the Render dashboard.
 - **AWS:** [infra/](infra/README.md) has the Terraform for S3, DynamoDB, a Lambda that processes decks and ECS Express Mode for the site, and CI deploys it on every merge to `main`. When `SUBMISSIONS_TABLE` is set, [app.py](app.py) uses [storage_aws.py](storage_aws.py) and leaves processing to [lambda_handler.py](lambda_handler.py). PDFs are not processed on AWS yet.
@@ -207,7 +207,7 @@ pipeline.log            what happened to every file, including failures
 ## Things to know
 
 - **Descriptions are a starting point.** The model sometimes gets names and dates wrong, and has invented a label that was not in the picture. Every generated description is flagged in the report so it can be checked before a file reaches students.
-- **There is no login yet.** Each browser gets a random id in a signed cookie, and nobody can open someone else's files, even with the link. But clearing cookies loses your history, and a shared browser shares it. Real use needs university sign-in.
+- **There is no login yet.** Each browser gets a random id in a signed cookie, and nobody can open someone else's files, even with the link. But clearing cookies loses your history, and a shared browser shares it. Sign-in with Amazon Cognito is planned ([#77](https://github.com/t-nair/automated-accessibility-enhancer/issues/77)).
 - **One file at a time** when the site runs the pipeline itself, so one large upload cannot hold up the server.
 - **"Permission denied" or "in use" errors** usually mean the deck is open in PowerPoint or a OneDrive or Dropbox sync is holding it. Close it or pause syncing and retry.
 - **Small-text cutoff:** set `MIN_FONT_PT` (for example `$env:MIN_FONT_PT=12`) before starting.
@@ -217,7 +217,7 @@ pipeline.log            what happened to every file, including failures
 ## Roadmap
 
 - Approving PDF image descriptions on the web page, not only the command line
-- University sign-in instead of the cookie ([#77](https://github.com/t-nair/automated-accessibility-enhancer/issues/77))
+- Sign-in with Amazon Cognito (email, Google, Microsoft; NetID later) instead of the cookie ([#77](https://github.com/t-nair/automated-accessibility-enhancer/issues/77))
 - A host for a shared deployment ([#102](https://github.com/t-nair/automated-accessibility-enhancer/issues/102)), upload limits ([#74](https://github.com/t-nair/automated-accessibility-enhancer/issues/74)) and file retention ([#78](https://github.com/t-nair/automated-accessibility-enhancer/issues/78))
 - Charts, SmartArt, grouped pictures and decorative images ([docs/wcag-coverage.md](docs/wcag-coverage.md))
 - HTML pages ([#41](https://github.com/t-nair/automated-accessibility-enhancer/issues/41))
