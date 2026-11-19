@@ -25,8 +25,19 @@ variable "processed_expiration_days" {
   }
 }
 
+variable "noncurrent_version_expiration_days" {
+  description = "How many days a deleted or overwritten file can still be restored from its previous version. The longest a file can survive is its expiry plus this."
+  type        = number
+  default     = 3
+
+  validation {
+    condition     = var.noncurrent_version_expiration_days >= 1
+    error_message = "S3 lifecycle expiry has to be at least 1 day."
+  }
+}
+
 variable "force_destroy" {
-  description = "Whether destroying the environment also empties the buckets. True because these only ever hold transient working files."
+  description = "Whether destroying the environment also empties the buckets, old versions included. Leave false for an environment people use, so a destroy stops at a bucket that still holds files."
   type        = bool
-  default     = true
+  default     = false
 }

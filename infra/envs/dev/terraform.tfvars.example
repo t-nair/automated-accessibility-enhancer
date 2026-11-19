@@ -23,6 +23,12 @@ bedrock_model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 uploads_expiration_days   = 7
 processed_expiration_days = 30
 
+# Backups. A deleted or overwritten file can be restored for this many days, and
+# the submissions table can be restored to any second in the last 35 days.
+noncurrent_version_expiration_days = 3
+submissions_point_in_time_recovery = true
+buckets_force_destroy              = false
+
 # Confirm the subscription email AWS sends, or these get nothing.
 alarm_email_addresses = ["you@uw.edu"]
 

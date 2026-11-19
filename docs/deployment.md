@@ -24,7 +24,7 @@ The [open decisions](#open-decisions) at the end still need an owner.
 | Who can use it | Anyone can create an account; sign-up is not limited to certain email domains for now. Until #77 ships there is no login, and anyone who can reach the site can upload |
 | Deploys | Every merge to `main`, from CI, after a reviewer approves the `production` environment |
 | Owner | @t-nair owns the AWS account, approves production deploys, and watches the bill and the alarms |
-| Backups | S3 versioning and DynamoDB point-in-time recovery, being added in #136 |
+| Backups | Files are versioned in S3 and can be restored for 3 days after they are deleted or overwritten; the submissions table can be restored to any second in the last 35 days ([infra/README.md](../infra/README.md#backups)) |
 
 The project site ([automated-accessibility-enhancer-site](https://github.com/t-nair/automated-accessibility-enhancer-site))
 is on Cloudflare Pages. A Pages Function there forwards `/app` to the ECS address and

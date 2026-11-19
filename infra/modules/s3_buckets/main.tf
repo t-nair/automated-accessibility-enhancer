@@ -65,6 +65,20 @@ resource "aws_s3_bucket_ownership_controls" "this" {
   }
 }
 
+# Versioning is the backup: a deck deleted or overwritten by mistake can be
+# brought back from its previous version until the lifecycle rule below removes
+# it, a few days later. It is not an archive, so old versions do not outlive the
+# expiry above by more than that window.
+resource "aws_s3_bucket_versioning" "this" {
+  for_each = aws_s3_bucket.this
+
+  bucket = each.value.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
   for_each = aws_s3_bucket.this
 
@@ -103,7 +117,28 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
     }
   }
 
-  depends_on = [aws_s3_bucket_ownership_controls.this]
+  # With versioning on, the expiry above and a delete from the app only hide the
+  # file behind a delete marker. This rule is what actually removes it, and then
+  # clears the marker left with nothing behind it.
+  rule {
+    id     = "remove-old-versions"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.noncurrent_version_expiration_days
+    }
+
+    expiration {
+      expired_object_delete_marker = true
+    }
+  }
+
+  depends_on = [
+    aws_s3_bucket_ownership_controls.this,
+    aws_s3_bucket_versioning.this,
+  ]
 }
 
 resource "aws_s3_bucket_policy" "this" {

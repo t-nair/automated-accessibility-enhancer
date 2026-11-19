@@ -125,7 +125,9 @@ data "aws_iam_policy_document" "state_access" {
       sid    = "NeverReadUploadedDecks"
       effect = "Deny"
 
-      actions = ["s3:GetObject"]
+      # GetObjectVersion too: the buckets are versioned, so old copies of a
+      # deck are another way to read it
+      actions = ["s3:GetObject", "s3:GetObjectVersion"]
 
       resources = [for arn in var.deny_object_read_bucket_arns : "${arn}/*"]
     }
@@ -258,7 +260,9 @@ data "aws_iam_policy_document" "apply" {
       sid    = "NeverReadUploadedDecks"
       effect = "Deny"
 
-      actions = ["s3:GetObject"]
+      # GetObjectVersion too: the buckets are versioned, so old copies of a
+      # deck are another way to read it
+      actions = ["s3:GetObject", "s3:GetObjectVersion"]
 
       resources = [for arn in var.deny_object_read_bucket_arns : "${arn}/*"]
     }
