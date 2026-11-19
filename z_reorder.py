@@ -22,7 +22,7 @@ from title_detection import guess_title, _ph_chain, DEFAULT_PT, FURNITURE_PH
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
 
 # On a laptop the log goes to pipeline.log. In a container it has to go to the
-# console instead, because App Runner and Lambda only collect what a container
+# console instead, because ECS and Lambda only collect what a container
 # prints: a log file inside one is never seen by anybody. The Dockerfiles set
 # LOG_FILE to nothing for that reason.
 LOG_FILE = os.environ.get("LOG_FILE", "pipeline.log")

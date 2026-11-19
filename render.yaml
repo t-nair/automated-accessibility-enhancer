@@ -2,7 +2,7 @@
 #
 # Python directly rather than the Docker image: Render installs the requirements
 # and starts the server itself, which is fewer moving parts and a faster build.
-# Dockerfile.web is still what App Runner uses on AWS, and the two run the same
+# Dockerfile.web is still what ECS uses on AWS, and the two run the same
 # command in the end.
 #
 # This is the local-storage version of the site: submissions live in a sqlite

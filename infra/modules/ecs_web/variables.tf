@@ -1,5 +1,5 @@
 variable "service_name" {
-  description = "Name of the App Runner service, also used to name its two IAM roles."
+  description = "Name of the service and its cluster, and the start of its three IAM role names."
   type        = string
 }
 
@@ -60,37 +60,43 @@ variable "pipeline_timeout_seconds" {
 }
 
 variable "cpu" {
-  description = "vCPU for each instance. The website only serves pages and hands out signed links, so the smallest size is plenty."
-  type        = string
-  default     = "0.25 vCPU"
+  description = "CPU units for each task (1024 is one vCPU). The website only serves pages and hands out signed links, so the smallest size, 256, is plenty."
+  type        = number
+  default     = 256
 }
 
 variable "memory" {
-  description = "Memory for each instance."
-  type        = string
-  default     = "0.5 GB"
+  description = "Memory for each task in MiB. 512 is the smallest Express Mode allows."
+  type        = number
+  default     = 512
 }
 
-variable "min_instances" {
-  description = "Instances kept warm. One is the lowest App Runner allows, and is what stops the first visitor of the day waiting for a cold start."
+variable "min_tasks" {
+  description = "Tasks kept running. One stops the first visitor of the day waiting for a cold start."
   type        = number
   default     = 1
 }
 
-variable "max_instances" {
+variable "max_tasks" {
   description = "How far the service may scale out."
   type        = number
   default     = 2
 }
 
-variable "max_requests_per_instance" {
-  description = "Requests one instance handles at once before another is started."
+variable "log_retention_days" {
+  description = "How long CloudWatch keeps the website's logs."
   type        = number
-  default     = 50
+  default     = 30
 }
 
-variable "deploy_on_push" {
-  description = "Whether pushing a new image with the same tag deploys it. Convenient while developing, worth turning off once real people use the site."
-  type        = bool
-  default     = true
+variable "subnet_ids" {
+  description = "Subnets to run in, at least two. Leave null to use the account's default VPC."
+  type        = list(string)
+  default     = null
+}
+
+variable "security_group_ids" {
+  description = "Security groups for the tasks when subnet_ids is set. Leave null for the VPC's default group."
+  type        = list(string)
+  default     = null
 }

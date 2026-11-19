@@ -118,31 +118,31 @@ variable "submissions_point_in_time_recovery" {
 }
 
 variable "web_cpu" {
-  description = "vCPU for each website instance."
-  type        = string
-  default     = "0.25 vCPU"
+  description = "CPU units for each website task. 1024 is one vCPU; 256 is the smallest."
+  type        = number
+  default     = 256
 }
 
 variable "web_memory" {
-  description = "Memory for each website instance."
-  type        = string
-  default     = "0.5 GB"
+  description = "Memory for each website task in MiB. 512 is the smallest."
+  type        = number
+  default     = 512
 }
 
-variable "web_min_instances" {
-  description = "Website instances kept warm. One is App Runner's lowest."
+variable "web_min_tasks" {
+  description = "Website tasks kept running. One stops the first visitor waiting for a cold start."
   type        = number
   default     = 1
 }
 
-variable "web_max_instances" {
+variable "web_max_tasks" {
   description = "How far the website may scale out."
   type        = number
   default     = 2
 }
 
-variable "web_deploy_on_push" {
-  description = "Whether pushing a new website image deploys it straight away."
-  type        = bool
-  default     = true
+variable "web_subnet_ids" {
+  description = "Subnets for the website, at least two. Leave null to use the account's default VPC, which an account without one cannot do."
+  type        = list(string)
+  default     = null
 }

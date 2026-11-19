@@ -1,4 +1,4 @@
-# The website as a container image, for App Runner.
+# The website as a container image, for ECS on AWS.
 #
 # Separate from the Lambda image on purpose. This one needs Flask, the templates
 # and the static files but never opens a deck, so it does not carry LibreOffice.
@@ -18,7 +18,7 @@ COPY pipeline/ pipeline/
 COPY templates/ templates/
 COPY static/ static/
 
-# App Runner sends requests to this port and expects the app to be listening on
+# ECS sends requests to this port and expects the app to be listening on
 # every interface, not just localhost. Other hosts pick their own port and pass
 # it in, so this is only the default.
 ENV PORT=8080

@@ -7,9 +7,10 @@ terraform {
   required_version = ">= 1.11"
 
   required_providers {
+    # 6.23 is the first with ECS Express Mode, which runs the website
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 6.0"
+      version = "~> 6.23"
     }
 
     random = {
@@ -132,7 +133,7 @@ module "pipeline" {
 }
 
 module "website" {
-  source = "../../modules/apprunner"
+  source = "../../modules/ecs_web"
 
   service_name = "${local.name_prefix}-web"
   image_uri    = "${module.ecr_web.repository_url}:${var.image_tag}"
@@ -153,11 +154,12 @@ module "website" {
   # with what the pipeline is actually allowed
   pipeline_timeout_seconds = var.lambda_timeout_seconds
 
-  cpu            = var.web_cpu
-  memory         = var.web_memory
-  min_instances  = var.web_min_instances
-  max_instances  = var.web_max_instances
-  deploy_on_push = var.web_deploy_on_push
+  cpu                = var.web_cpu
+  memory             = var.web_memory
+  min_tasks          = var.web_min_tasks
+  max_tasks          = var.web_max_tasks
+  log_retention_days = var.log_retention_days
+  subnet_ids         = var.web_subnet_ids
 }
 
 module "ci_role" {
@@ -168,7 +170,12 @@ module "ci_role" {
   role_name            = "${local.name_prefix}-github-plan"
   state_bucket_name    = var.state_bucket_name
 
-  # CI plans infrastructure; it has no business reading the decks themselves
+  # the deploy job's role. Only jobs using the repository's "production"
+  # environment can assume it, and it may only touch roles named aae-dev-...
+  apply_role_name     = "${local.name_prefix}-github-apply"
+  managed_role_prefix = "${local.name_prefix}-"
+
+  # neither CI role has any business reading the decks themselves
   deny_object_read_bucket_arns = [
     module.buckets.uploads_bucket_arn,
     module.buckets.processed_bucket_arn,

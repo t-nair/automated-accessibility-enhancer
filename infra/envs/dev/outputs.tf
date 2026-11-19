@@ -26,13 +26,18 @@ output "alarm_topic_arn" {
 }
 
 output "github_actions_role_arn" {
-  description = "Give this to aws-actions/configure-aws-credentials as role-to-assume."
+  description = "Role pull requests assume to run terraform plan. Goes in the AWS_PLAN_ROLE_ARN repository variable."
   value       = module.ci_role.role_arn
 }
 
+output "github_actions_apply_role_arn" {
+  description = "Role the deploy job assumes to push images and run terraform apply. Goes in the AWS_APPLY_ROLE_ARN repository variable."
+  value       = module.ci_role.apply_role_arn
+}
+
 output "website_url" {
-  description = "The address to open in a browser. App Runner provides the certificate."
-  value       = module.website.service_url
+  description = "The address to open in a browser. ECS provides the load balancer and its certificate."
+  value       = module.website.endpoint
 }
 
 output "web_repository_url" {
