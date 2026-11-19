@@ -49,6 +49,20 @@ variable "processed_expiration_days" {
   default     = 30
 }
 
+# --- backups ---
+
+variable "noncurrent_version_expiration_days" {
+  description = "Days a deleted or overwritten file can still be restored from its previous version."
+  type        = number
+  default     = 3
+}
+
+variable "buckets_force_destroy" {
+  description = "Whether terraform destroy empties the buckets, old versions included. Set true only for a scratch environment."
+  type        = bool
+  default     = false
+}
+
 # --- captioning ---
 
 variable "bedrock_model_id" {
@@ -112,9 +126,9 @@ variable "create_oidc_provider" {
 }
 
 variable "submissions_point_in_time_recovery" {
-  description = "Whether the submissions table keeps continuous backups. Worth turning on for anything people rely on."
+  description = "Whether the submissions table keeps continuous backups, so it can be restored to any second in the last 35 days. Turn off only for a scratch environment."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "web_cpu" {

@@ -32,6 +32,23 @@ is no reason to keep paying to store someone's lecture, and holding real course
 material longer than it is needed is a liability rather than a feature. Both
 periods are variables if they turn out to be wrong.
 
+### Backups
+
+- **Files:** both buckets are versioned. A file that is deleted or overwritten,
+  by the app, by the expiry or by mistake, keeps its previous version for 3 days
+  (`noncurrent_version_expiration_days`) and is then removed for good. So the
+  longest a file can exist is its expiry plus 3 days: 10 days for an upload, 33
+  for a processed file, and a file someone deletes from the status page is gone
+  3 days later.
+- **Submissions:** the table has point-in-time recovery, so it can be restored
+  to any second in the last 35 days.
+- **Tearing down:** `buckets_force_destroy` is false, so `terraform destroy`
+  stops at a bucket that still holds files instead of emptying it.
+
+Nothing is copied to another region or account. These are working files with a
+short life, and a copy that outlived them would keep course material longer than
+people are told. See *Restoring from a backup* below.
+
 ---
 
 ## Prerequisites
@@ -178,6 +195,50 @@ terraform apply -var image_tag=<tag>
 
 ---
 
+## Restoring from a backup
+
+Both need someone with more than the CI roles have: they are denied reading
+decks, and restoring one means reading it.
+
+### A file
+
+A deleted file is hidden behind a delete marker. Removing the marker brings the
+previous version back:
+
+```bash
+# find the delete marker for the key
+aws s3api list-object-versions --bucket <bucket> --prefix <key>
+
+# delete the marker itself (its VersionId, with IsLatest true)
+aws s3api delete-object --bucket <bucket> --key <key> --version-id <marker-version-id>
+```
+
+An overwritten file comes back by copying the older version over the current
+one:
+
+```bash
+aws s3api copy-object --bucket <bucket> --key <key>   --copy-source "<bucket>/<key>?versionId=<old-version-id>"
+```
+
+This only works within 3 days of the delete or overwrite.
+
+### The submissions table
+
+A point-in-time restore always makes a **new** table; it never rewinds the
+existing one:
+
+```bash
+aws dynamodb restore-table-to-point-in-time   --source-table-name aae-dev-submissions   --target-table-name aae-dev-submissions-restored   --restore-date-time <ISO 8601 time, before the damage>
+```
+
+The new table does not get the original's time to live, point-in-time recovery
+or tags; those come from Terraform. Then either copy the items you need back into
+`aae-dev-submissions`, or, to swap the whole table, delete the original, restore
+again under the original name, and run `terraform apply` so Terraform puts its
+settings back on it.
+
+---
+
 ## CI
 
 `modules/github_oidc` creates two roles that GitHub Actions assumes through
@@ -194,7 +255,8 @@ it for temporary credentials.
   `PowerUserAccess` and IAM read access, and may only create, change and pass
   roles whose names start with `aae-dev-`.
 
-Both are explicitly denied `s3:GetObject` on the uploads and processed buckets,
+Both are explicitly denied `s3:GetObject` and `s3:GetObjectVersion` on the
+uploads and processed buckets,
 because their broad policies would otherwise let a workflow download real
 course material, and neither has a reason to read a deck.
 
@@ -246,8 +308,8 @@ to be assigned.
 Otherwise, in IAM Identity Center, create a group for each kind of person and
 give each a permission set on this account:
 
-- **Viewers**: `ReadOnlyAccess`, plus an inline policy denying `s3:GetObject` on
-  the uploads and processed buckets, for the same reason as the CI roles.
+- **Viewers**: `ReadOnlyAccess`, plus an inline policy denying `s3:GetObject` and
+  `s3:GetObjectVersion` on the uploads and processed buckets, for the same reason as the CI roles.
 - **Developers**: viewer access plus what investigating takes, such as
   CloudWatch Logs Insights queries. Deploying goes through CI, not the console.
 - **Administrators**: one or two people.

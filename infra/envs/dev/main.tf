@@ -44,9 +44,11 @@ locals {
 module "buckets" {
   source = "../../modules/s3_buckets"
 
-  name_prefix               = local.name_prefix
-  uploads_expiration_days   = var.uploads_expiration_days
-  processed_expiration_days = var.processed_expiration_days
+  name_prefix                        = local.name_prefix
+  uploads_expiration_days            = var.uploads_expiration_days
+  processed_expiration_days          = var.processed_expiration_days
+  noncurrent_version_expiration_days = var.noncurrent_version_expiration_days
+  force_destroy                      = var.buckets_force_destroy
 }
 
 module "ecr" {
