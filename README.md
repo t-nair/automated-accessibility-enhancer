@@ -156,6 +156,8 @@ This writes a tagged PDF, an HTML companion and a JSON manifest. PDFs with image
 
 ## Deploying
 
+![Production architecture: Cloudflare forwards accessibilityenhancer.com/app to the Flask website on AWS ECS, which saves decks to S3; a Lambda fixes them with Claude on Bedrock and records progress in DynamoDB](docs/architecture.svg)
+
 `python app.py` serves the app with [Waitress](https://docs.pylonsproject.org/projects/waitress/) on Windows or Linux. It must run as **one process**: the queue and the progress live in it. [docs/deployment.md](docs/deployment.md) covers the server it needs, environment variables, where data is kept, a systemd unit, nginx with HTTPS, how production runs on AWS, and the decisions still open (upload limits, retention, running more than one file at a time).
 
 - **Render:** [render.yaml](render.yaml) runs the site on Render's free plan with local storage. Set the Bedrock access key in the Render dashboard.
