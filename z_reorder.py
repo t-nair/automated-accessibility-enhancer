@@ -606,7 +606,11 @@ def process_one_file(filename, directory, new_directory, progress_callback=None,
         # the same findings again, arranged for the web page. The text file above is
         # the one to keep or send on; this one is only so the report can be read a
         # slide at a time instead of as one long block.
-        write_report_data(alt_text_output_file + ".json", prs, counts, issues, language_issues)
+        # so a failure here only costs the page view, never the deck or the text report
+        try:
+            write_report_data(alt_text_output_file + ".json", prs, counts, issues, language_issues)
+        except Exception as e:
+            logging.exception(f"Could not write the report data for {filename}. Error: {e}")
     except Exception as e:
         logging.exception(f"Something went wrong processing shapes in {filename}. Error: {e}")
         return False, "We opened your file, but something went wrong while checking your slides for accessibility issues.", [

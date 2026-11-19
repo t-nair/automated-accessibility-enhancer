@@ -1,3 +1,4 @@
+import io
 import os
 import json
 import time
@@ -8,7 +9,7 @@ import secrets
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, Response
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, send_file
 from werkzeug.utils import secure_filename
 from z_reorder import process_one_file, severity_summary
 
@@ -636,11 +637,14 @@ def download_report(submission_id):
 
     # the report is written without an extension, so give the download a .txt one
     # for the sake of whoever opens it
-    filename = os.path.splitext(matching_submission["original_filename"])[0] + "_accessibility_report.txt"
+    # control characters would make the header invalid, so they are dropped
+    stem = "".join(c for c in os.path.splitext(matching_submission["original_filename"])[0] if c.isprintable())
+    filename = (stem or "presentation") + "_accessibility_report.txt"
 
-    # Flask adds the charset itself, so naming it here would say it twice
-    return Response(report_text, mimetype="text/plain",
-                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    # send_file quotes and encodes the name itself, so a quote or an accented
+    # letter in the uploaded name cannot break the header
+    return send_file(io.BytesIO(report_text.encode("utf-8")), mimetype="text/plain",
+                     as_attachment=True, download_name=filename)
 
 
 @app.route("/download/<submission_id>")

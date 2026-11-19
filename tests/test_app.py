@@ -363,6 +363,20 @@ def test_downloading_a_finished_file_sends_it(client):
     assert "accessible_Lecture.pptx" in response.headers["Content-Disposition"]
 
 
+def test_a_report_for_an_awkward_file_name_still_downloads(client):
+    add_submission("odd00001", original_filename='My "Déck"' + chr(13) + chr(10) + '.pptx', alt_text_filename="odd00001_alt_text")
+
+    with open(os.path.join(storage_module.PROCESSED_FOLDER, "odd00001_alt_text"), "w", encoding="utf-8") as f:
+        f.write("the report")
+
+    response = client.get("/report/odd00001")
+
+    assert response.status_code == 200
+    assert response.get_data(as_text=True) == "the report"
+    assert "_accessibility_report.txt" in response.headers["Content-Disposition"]
+    assert "\n" not in response.headers["Content-Disposition"]
+
+
 def test_retrying_a_finished_file_is_refused(client):
     add_submission("fine0001")
 
