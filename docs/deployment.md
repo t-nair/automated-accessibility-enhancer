@@ -21,7 +21,10 @@ The [open decisions](#open-decisions) at the end still need an owner.
 | Image descriptions | Claude on Amazon Bedrock, in the same AWS account. Local Qwen2-VL is no longer used (#97) |
 | Certificates | Cloudflare issues and renews the one for `accessibilityenhancer.com`. ECS Express Mode issues and renews the one for its own `*.ecs.us-east-1.on.aws` address. Nobody renews anything by hand |
 | Sign-in | Amazon Cognito, being built in #77: email and password, Google and Microsoft, NetID later. A visitor gets one run without an account and is then asked to sign in or create one |
+| Who can use it | Anyone can create an account; sign-up is not limited to certain email domains for now. Until #77 ships there is no login, and anyone who can reach the site can upload |
 | Deploys | Every merge to `main`, from CI, after a reviewer approves the `production` environment |
+| Owner | @t-nair owns the AWS account, approves production deploys, and watches the bill and the alarms |
+| Backups | S3 versioning and DynamoDB point-in-time recovery, being added in #136 |
 
 The project site ([automated-accessibility-enhancer-site](https://github.com/t-nair/automated-accessibility-enhancer-site))
 is on Cloudflare Pages. A Pages Function there forwards `/app` to the ECS address and
@@ -34,8 +37,7 @@ Without Cognito configured (on a laptop, or a server of your own) the app keeps
 identifying visitors by a signed cookie, as it does today.
 
 Files are not on a server disk in production. Uploads and results are in S3 and expire on
-their own (uploads after 7 days, results after 30), and submissions are in DynamoDB. See
-open decision 3 for backups.
+their own (uploads after 7 days, results after 30), and submissions are in DynamoDB.
 
 ---
 
@@ -236,22 +238,11 @@ that asks the person to upload it again.
 
 These are not settled in the code or the repository and need someone to decide:
 
-1. **Who can use it.** Sign-in is Amazon Cognito (#77). Open sign-up still lets anyone
-   create an account, so whether to limit sign-up to certain email domains (a Cognito
-   pre sign-up trigger) until NetID is available is still to be decided. Until #77 ships
-   there is no login, and anyone who can reach the site can upload. (#102)
-2. **Who runs it.** Who owns the AWS account, approves production deploys, and watches
-   the bill and the alarms is not written down. (#102)
-3. **Backups.** Nothing is backed up yet. The buckets have no versioning, so a deleted or
-   overwritten file cannot be recovered, and `submissions_point_in_time_recovery` is off
-   by default. The plan is S3 versioning with old versions removed after a few days, and
-   point-in-time recovery on for the submissions table (restore to any second in the last
-   35 days). Any backup must still respect the retention period in decision 5. (#136)
-4. **Upload limits.** Each file may be 50 MB (`MAX_FILE_SIZE_MB`) and one upload 250 MB
+1. **Upload limits.** Each file may be 50 MB (`MAX_FILE_SIZE_MB`) and one upload 250 MB
    (`MAX_REQUEST_SIZE_MB`). Cloudflare refuses request bodies over 100 MB on its Free and
    Pro plans, so through `accessibilityenhancer.com/app` one upload is in practice limited
    to 100 MB. On your own server, raise nginx's `client_max_body_size` to match. (#74)
-5. **Keeping files.** Everything is deleted after 30 days (uploads after 7 on AWS).
+2. **Keeping files.** Everything is deleted after 30 days (uploads after 7 on AWS).
    Confirm that period is right. (#78)
-6. **More than one file at a time.** Needs a shared queue and progress outside the process.
+3. **More than one file at a time.** Needs a shared queue and progress outside the process.
    Until then, one process. (#104)

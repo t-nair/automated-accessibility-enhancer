@@ -156,7 +156,7 @@ This writes a tagged PDF, an HTML companion and a JSON manifest. PDFs with image
 
 ## Deploying
 
-`python app.py` serves the app with [Waitress](https://docs.pylonsproject.org/projects/waitress/) on Windows or Linux. It must run as **one process**: the queue and the progress live in it. [docs/deployment.md](docs/deployment.md) covers the server it needs, environment variables, where data is kept, a systemd unit, nginx with HTTPS, how production runs on AWS, and the decisions still open (sign-up limits, backups, upload limits, retention).
+`python app.py` serves the app with [Waitress](https://docs.pylonsproject.org/projects/waitress/) on Windows or Linux. It must run as **one process**: the queue and the progress live in it. [docs/deployment.md](docs/deployment.md) covers the server it needs, environment variables, where data is kept, a systemd unit, nginx with HTTPS, how production runs on AWS, and the decisions still open (upload limits, retention, running more than one file at a time).
 
 - **Render:** [render.yaml](render.yaml) runs the site on Render's free plan with local storage. Set the Bedrock access key in the Render dashboard.
 - **AWS:** [infra/](infra/README.md) has the Terraform for S3, DynamoDB, a Lambda that processes decks and ECS Express Mode for the site, and CI deploys it on every merge to `main`. When `SUBMISSIONS_TABLE` is set, [app.py](app.py) uses [storage_aws.py](storage_aws.py) and leaves processing to [lambda_handler.py](lambda_handler.py). PDFs are not processed on AWS yet.
