@@ -4,11 +4,35 @@ The website is served by [Waitress](https://docs.pylonsproject.org/projects/wait
 which runs on Windows and Linux. Everything runs on the server itself except image
 descriptions: each picture that needs one is sent to Claude on Amazon Bedrock.
 
-This guide is for one server you run yourself. For Render, see [render.yaml](../render.yaml);
-for AWS (S3, DynamoDB, Lambda and ECS), see [infra/README.md](../infra/README.md).
+The real site runs on AWS; see [Production](#production) below and
+[infra/README.md](../infra/README.md) for how it is built and deployed. The rest of this
+guide is for running it on one server of your own.
 
-The [open decisions](#open-decisions) at the end still need an owner before this runs
-anywhere real.
+The [open decisions](#open-decisions) at the end still need an owner.
+
+---
+
+## Production
+
+| | |
+|---|---|
+| Address | `https://accessibilityenhancer.com/app` ("Try the tool" on the project site) |
+| Host | AWS, `us-east-1`: the website on ECS Express Mode, decks processed by Lambda, files in S3, submissions in DynamoDB ([infra/](../infra/README.md)) |
+| Image descriptions | Claude on Amazon Bedrock, in the same AWS account. Local Qwen2-VL is no longer used (#97) |
+| Certificates | Cloudflare issues and renews the one for `accessibilityenhancer.com`. ECS Express Mode issues and renews the one for its own `*.ecs.us-east-1.on.aws` address. Nobody renews anything by hand |
+| Deploys | Every merge to `main`, from CI, after a reviewer approves the `production` environment |
+
+The project site ([automated-accessibility-enhancer-site](https://github.com/t-nair/automated-accessibility-enhancer-site))
+is on Cloudflare Pages. A Pages Function there forwards `/app` to the ECS address and
+sends `X-Forwarded-Prefix: /app`, so links in the app point back under `/app`.
+
+The ECS address can also be reached directly, so the Cloudflare proxy cannot be what keeps
+people out. Sign-in has to be checked in the app itself (#77), and the AWS load balancer
+cannot do it either, because ECS Express Mode manages that load balancer itself.
+
+Files are not on a server disk in production. Uploads and results are in S3 and expire on
+their own (uploads after 7 days, results after 30), and submissions are in DynamoDB. See
+open decision 3 for backups.
 
 ---
 
@@ -160,16 +184,19 @@ wrapper such as NSSM, and put the variables in the service's environment.
 
 ## Reverse proxy and HTTPS (nginx)
 
+For a server of your own only; production does not use nginx. Replace
+`accessibility.your-university.edu` and the certificate paths with your own.
+
 ```nginx
 server {
     listen 80;
-    server_name accessibility.example.edu;
+    server_name accessibility.your-university.edu;
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl;
-    server_name accessibility.example.edu;
+    server_name accessibility.your-university.edu;
 
     ssl_certificate     /etc/ssl/certs/accessibility.pem;
     ssl_certificate_key /etc/ssl/private/accessibility.key;
@@ -206,19 +233,23 @@ that asks the person to upload it again.
 
 These are not settled in the code or the repository and need someone to decide:
 
-1. **The host.** The demo runs on Render's free plan ([render.yaml](../render.yaml)), whose
-   disk is wiped on every restart, and [infra/](../infra/README.md) has an AWS setup. Image
-   descriptions go to Claude on Amazon Bedrock, so course images leave the server either
-   way. Whoever picks the host for real use needs to confirm it, and Bedrock, may hold
-   course material. (#102)
-2. **Domain and certificate.** `accessibility.example.edu` and the certificate paths above
-   are placeholders. (#102)
-3. **Who can use it.** There is no login; anyone who can reach the site can upload. Until
-   there is university sign-in, keep it on the campus network or VPN, or put sign-in in
-   front of it at the proxy. Real sign-in is #77; the interim choice is #102.
+1. **Who can use it.** There is no login yet; anyone who can reach the site can upload.
+   The plan is the app's own sign-in (email and password, Google, Microsoft) while NetID is
+   discussed with UW IT (#77): a visitor can run one deck without an account and is then
+   asked to sign in or create one. Open sign-up still lets anyone in, so whether to limit
+   accounts to certain email domains until NetID is still to be decided. (#102)
+2. **Who runs it.** Who owns the AWS account, approves production deploys, and watches
+   the bill and the alarms is not written down. (#102)
+3. **Backups.** Nothing is backed up yet. The buckets have no versioning, so a deleted or
+   overwritten file cannot be recovered, and `submissions_point_in_time_recovery` is off
+   by default. The plan is S3 versioning with old versions removed after a few days, and
+   point-in-time recovery on for the submissions table (restore to any second in the last
+   35 days). Any backup must still respect the retention period in decision 5. (#102)
 4. **Upload limits.** Each file may be 50 MB (`MAX_FILE_SIZE_MB`) and one upload 250 MB
-   (`MAX_REQUEST_SIZE_MB`). Raise nginx's `client_max_body_size` to match if that total is
-   kept. (#74)
-5. **Keeping files.** Everything is deleted after 30 days. Confirm that period is right. (#78)
+   (`MAX_REQUEST_SIZE_MB`). Cloudflare refuses request bodies over 100 MB on its Free and
+   Pro plans, so through `accessibilityenhancer.com/app` one upload is in practice limited
+   to 100 MB. On your own server, raise nginx's `client_max_body_size` to match. (#74)
+5. **Keeping files.** Everything is deleted after 30 days (uploads after 7 on AWS).
+   Confirm that period is right. (#78)
 6. **More than one file at a time.** Needs a shared queue and progress outside the process.
    Until then, one process. (#104)
