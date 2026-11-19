@@ -60,7 +60,7 @@ output "cognito_sign_in_domain" {
 }
 
 output "cognito_identity_provider_redirect_uri" {
-  description = "The redirect URI to register in the Google and Microsoft apps."
+  description = "The redirect URI to register in the Google OAuth client."
   value       = module.auth.identity_provider_redirect_uri
 }
 

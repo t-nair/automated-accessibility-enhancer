@@ -27,7 +27,7 @@ output "domain_url" {
   value = "https://${aws_cognito_user_pool_domain.this.domain}.auth.${data.aws_region.current.region}.amazoncognito.com"
 }
 
-# the redirect URI to register in the Google and Microsoft apps
+# the redirect URI to register in the Google OAuth client
 output "identity_provider_redirect_uri" {
   value = "https://${aws_cognito_user_pool_domain.this.domain}.auth.${data.aws_region.current.region}.amazoncognito.com/oauth2/idpresponse"
 }

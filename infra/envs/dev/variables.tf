@@ -188,31 +188,7 @@ variable "cognito_extra_logout_urls" {
 }
 
 variable "google_client_id" {
-  description = "OAuth client id from Google Cloud. Leave null to leave Google sign-in off."
-  type        = string
-  default     = null
-}
-
-variable "google_client_secret" {
-  type      = string
-  default   = null
-  sensitive = true
-}
-
-variable "microsoft_client_id" {
-  description = "Application (client) id from the Entra app registration. Leave null to leave Microsoft sign-in off."
-  type        = string
-  default     = null
-}
-
-variable "microsoft_client_secret" {
-  type      = string
-  default   = null
-  sensitive = true
-}
-
-variable "microsoft_tenant_id" {
-  description = "The one Entra tenant whose accounts can sign in. 9188040d-6c67-4c5b-b112-36a304b66dad is personal Microsoft accounts."
+  description = "OAuth client id from Google Cloud. Leave null to leave Google sign-in off. The secret goes in Parameter Store, not here (see infra/README.md)."
   type        = string
   default     = null
 }

@@ -145,11 +145,8 @@ module "auth" {
   callback_urls = concat(["${var.public_url}/auth/callback"], var.cognito_extra_callback_urls)
   logout_urls   = concat(["${var.public_url}/"], var.cognito_extra_logout_urls)
 
-  google_client_id        = var.google_client_id
-  google_client_secret    = var.google_client_secret
-  microsoft_client_id     = var.microsoft_client_id
-  microsoft_client_secret = var.microsoft_client_secret
-  microsoft_tenant_id     = var.microsoft_tenant_id
+  google_client_id                    = var.google_client_id
+  google_client_secret_parameter_name = "/${var.project}/${var.environment}/google-client-secret"
 
   email_domain          = var.email_domain
   email_domain_verified = var.email_domain_verified

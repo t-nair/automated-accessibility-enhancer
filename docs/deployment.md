@@ -20,7 +20,7 @@ The [open decisions](#open-decisions) at the end still need an owner.
 | Host | AWS, `us-east-1`: the website on ECS Express Mode, decks processed by Lambda, files in S3, submissions in DynamoDB ([infra/](../infra/README.md)) |
 | Image descriptions | Claude on Amazon Bedrock, in the same AWS account. Local Qwen2-VL is no longer used (#97) |
 | Certificates | Cloudflare issues and renews the one for `accessibilityenhancer.com`. ECS Express Mode issues and renews the one for its own `*.ecs.us-east-1.on.aws` address. Nobody renews anything by hand |
-| Sign-in | Amazon Cognito ([infra/README.md](../infra/README.md#sign-in)), being built in #77: email and password, Google and Microsoft, NetID later. A visitor gets one run without an account and is then asked to sign in or create one |
+| Sign-in | Amazon Cognito ([infra/README.md](../infra/README.md#sign-in)), being built in #77: email and password and Google; Microsoft and NetID later. A visitor gets one run without an account and is then asked to sign in or create one |
 | Who can use it | Anyone can create an account; sign-up is not limited to certain email domains for now. Until #77 ships there is no login, and anyone who can reach the site can upload |
 | Deploys | Every merge to `main`, from CI, after a reviewer approves the `production` environment |
 | Owner | @t-nair owns the AWS account, approves production deploys, and watches the bill and the alarms |
