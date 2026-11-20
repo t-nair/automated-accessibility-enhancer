@@ -62,6 +62,15 @@ def test_without_cognito_an_upload_shows_no_prompt(client):
     assert b"sign-in-prompt" not in client.get("/status").data
 
 
+# Lax still sends the cookie when Cognito redirects back, and keeps it off
+# requests other sites start
+def test_the_session_cookie_is_same_site_lax(client, cognito):
+    cookie = client.get("/auth/sign-in").headers.get("Set-Cookie", "")
+
+    assert "session=" in cookie
+    assert "SameSite=Lax" in cookie
+
+
 # --- going to Cognito ---
 
 def test_sign_in_sends_the_person_to_cognito_with_pkce(client, cognito):

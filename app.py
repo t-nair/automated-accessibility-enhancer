@@ -79,7 +79,9 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_SIZE_MB * 1024 * 1024
 # Lax still sends the cookie when Cognito sends someone back after sign-in, which
 # is a top-level GET, and keeps it off requests other sites start. Secure whenever
 # the public address is HTTPS. Either can still be set with FLASK_ variables.
-app.config.setdefault("SESSION_COOKIE_SAMESITE", "Lax")
+# (setdefault would do nothing: Flask's defaults already have the key, set to None)
+if "FLASK_SESSION_COOKIE_SAMESITE" not in os.environ:
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 if "FLASK_SESSION_COOKIE_SECURE" not in os.environ:
     app.config["SESSION_COOKIE_SECURE"] = auth.PUBLIC_URL.startswith("https://")
