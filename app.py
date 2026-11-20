@@ -697,7 +697,9 @@ def auth_callback():
         flash("Sign-in did not work. Please try again.")
         return redirect(url_for("status"))
 
-    browser_owner = session.get("owner_id")
+    # Only an anonymous browser's files move. If someone was already signed in here
+    # (a shared computer, nobody signed out), their files stay in their account.
+    browser_owner = None if session.get("email") else session.get("owner_id")
 
     # a fresh session, so nothing from before sign-in carries over
     session.clear()

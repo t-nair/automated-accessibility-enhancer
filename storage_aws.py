@@ -179,22 +179,27 @@ def get_submission(submission_id):
 
 
 def get_submissions_for_owner(owner_id):
-    answer = get_table().query(
-        IndexName=OWNER_INDEX,
-        KeyConditionExpression=Key("owner_id").eq(owner_id),
-        ScanIndexForward=False,
-    )
-
+    arguments = {
+        "IndexName": OWNER_INDEX,
+        "KeyConditionExpression": Key("owner_id").eq(owner_id),
+        "ScanIndexForward": False,
+    }
     submissions = []
 
-    for item in answer.get("Items", []):
-        submissions.append(item_to_submission(item))
+    # a query stops at 1 MB, so keep asking until DynamoDB says there is no more
+    while True:
+        answer = get_table().query(**arguments)
 
-    return submissions
+        for item in answer.get("Items", []):
+            submissions.append(item_to_submission(item))
+
+        if "LastEvaluatedKey" not in answer:
+            return submissions
+
+        arguments["ExclusiveStartKey"] = answer["LastEvaluatedKey"]
 
 
-# when someone signs in, the files this browser sent in become theirs. One
-# browser's list is small, so one page of the index is all there is.
+# when someone signs in, the files this browser sent in become theirs
 def move_submissions(from_owner, to_owner):
     for submission in get_submissions_for_owner(from_owner):
         update_submission(submission["id"], {"owner_id": to_owner})

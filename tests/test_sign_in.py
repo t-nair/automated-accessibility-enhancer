@@ -119,6 +119,25 @@ def test_signing_in_moves_this_browsers_files_into_the_account(client, cognito):
     assert b"Lecture.pptx" in page
 
 
+def test_signing_in_over_someone_elses_account_does_not_take_their_files(client, cognito, monkeypatch):
+    # person A signed in on a shared computer and never signed out
+    with client.session_transaction() as browser_session:
+        browser_session["owner_id"] = "account-a"
+        browser_session["email"] = "a@uw.edu"
+
+    add_submission("aaaa0001", owner_id="account-a")
+    state = start_sign_in(client)["state"]
+
+    # person B signs in from the same browser
+    monkeypatch.setattr(auth, "user_for_code", lambda code, verifier, redirect_uri: {"sub": "account-b", "email": "b@uw.edu"})
+    client.get(f"/auth/callback?code=the-code&state={state}")
+
+    assert storage_module.get_submission("aaaa0001")["owner_id"] == "account-a"
+
+    with client.session_transaction() as browser_session:
+        assert browser_session["owner_id"] == "account-b"
+
+
 def test_the_code_is_exchanged_with_the_public_redirect_uri_and_the_verifier(client, cognito):
     state = start_sign_in(client)["state"]
 
