@@ -147,6 +147,14 @@ def get_submissions_for_owner(owner_id):
     return submissions
 
 
+# when someone signs in, the files this browser sent in become theirs
+def move_submissions(from_owner, to_owner):
+    connection = get_connection()
+    connection.execute("UPDATE submissions SET owner_id = ? WHERE owner_id = ?", (to_owner, from_owner))
+    connection.commit()
+    connection.close()
+
+
 # changes is a dictionary of column names and their new values
 def update_submission(submission_id, changes):
     if not changes:

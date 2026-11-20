@@ -193,6 +193,13 @@ def get_submissions_for_owner(owner_id):
     return submissions
 
 
+# when someone signs in, the files this browser sent in become theirs. One
+# browser's list is small, so one page of the index is all there is.
+def move_submissions(from_owner, to_owner):
+    for submission in get_submissions_for_owner(from_owner):
+        update_submission(submission["id"], {"owner_id": to_owner})
+
+
 def update_submission(submission_id, changes):
     if not changes:
         return

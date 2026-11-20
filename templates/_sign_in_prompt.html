@@ -1,0 +1,15 @@
+{% if show_sign_in_prompt %}
+    {# opened with showModal() by script.js, which moves focus into it and back out on close #}
+    <dialog id="sign-in-prompt" aria-labelledby="sign-in-prompt-title">
+        <h2 id="sign-in-prompt-title">Keep your files</h2>
+        <p>We are fixing your files now. Without an account they are only listed in this browser, so you can't come back to them from another computer, or after clearing your cookies.</p>
+        <p>Create a free account to keep your files and come back to them any time. It's optional.</p>
+        <div class="dialog-actions">
+            <a class="button-link" href="{{ url_for('sign_in', create=1) }}">Create an account</a>
+            <a class="button-link secondary" href="{{ url_for('sign_in') }}">Sign in</a>
+            <form method="dialog">
+                <button type="submit" class="link-button dark">Not now</button>
+            </form>
+        </div>
+    </dialog>
+{% endif %}

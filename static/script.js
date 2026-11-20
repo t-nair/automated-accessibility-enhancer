@@ -364,3 +364,12 @@ if (slideViewer) {
         });
     }
 }
+
+
+// the "keep your files" suggestion after an upload. showModal() moves focus into
+// it, keeps it there, and puts it back when the dialog closes (Not now or Esc).
+const signInPrompt = document.getElementById("sign-in-prompt");
+
+if (signInPrompt && typeof signInPrompt.showModal === "function") {
+    signInPrompt.showModal();
+}

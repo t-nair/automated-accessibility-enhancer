@@ -9,6 +9,7 @@ from werkzeug.serving import make_server
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import app as app_module
+import auth
 import storage_local as storage_module
 
 # CI must run these, so only a local run without Playwright may skip them
@@ -49,6 +50,10 @@ def base_url(tmp_path_factory):
     patch.setattr(storage_module, "PROCESSED_FOLDER", str(folder))
     patch.setattr(storage_module, "DATABASE_FILE", str(folder / "submissions.db"))
     patch.setattr(app_module, "start_processing", lambda submission_id, saved_name: None)
+
+    # sign-in on, so the header's account links and the sign-in suggestion are audited
+    # too. Nothing here ever goes to Cognito.
+    patch.setattr(auth, "ENABLED", True)
     storage_module.setup()
 
     (folder / "done_report.txt").write_text("Slide 1: added a description to 1 picture.\n", encoding="utf-8")
@@ -107,6 +112,8 @@ STATES = [
     ("details processing", "/details/process1", None, True),
     ("details done with report", "/details/done0001", None, True),
     ("details failed", "/details/error001", None, True),
+    ("details with the sign-in suggestion open", "/details/done0001", None, {"show_sign_in_prompt": True}),
+    ("status signed in", "/status", None, {"email": "prof@uw.edu"}),
 ]
 
 
@@ -115,8 +122,10 @@ def test_page_has_no_axe_violations(base_url, browser, axe_source, path, action,
     # a zero-width viewport hides colours from axe, so always set a real one
     context = browser.new_context(viewport={"width": 1280, "height": 900})
 
+    # True is a visitor who owns the submissions; a dict adds more to their session
     if as_owner:
-        cookie = app_module.app.session_interface.get_signing_serializer(app_module.app).dumps({"owner_id": OWNER_ID})
+        extras = as_owner if isinstance(as_owner, dict) else {}
+        cookie = app_module.app.session_interface.get_signing_serializer(app_module.app).dumps({"owner_id": OWNER_ID, **extras})
         context.add_cookies([{"name": app_module.app.config["SESSION_COOKIE_NAME"], "value": cookie, "url": base_url}])
 
     page = context.new_page()

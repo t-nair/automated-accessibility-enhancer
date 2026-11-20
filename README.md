@@ -68,7 +68,7 @@ Open work is tracked in [issues](https://github.com/t-nair/automated-accessibili
 ## Things to know
 
 - **Descriptions are a starting point.** The model sometimes gets names and dates wrong. Every generated description is flagged in the report so it can be checked before a file reaches students.
-- **There is no login yet.** Each browser gets a random id in a signed cookie, so nobody can open someone else's files, but clearing cookies loses your history. Sign-in with Amazon Cognito is in progress ([#77](https://github.com/t-nair/automated-accessibility-enhancer/issues/77)).
+- **Signing in is optional.** Without an account, your files are listed only in the browser you sent them from, tied to a signed cookie, so nobody else can open them. Signing in (email and password, or Google) keeps them in an account you can come back to from anywhere, and moves anything this browser already sent in.
 - **"Permission denied" or "in use" errors** usually mean the deck is open in PowerPoint or a sync app is holding it. Close it and retry.
 
 ---

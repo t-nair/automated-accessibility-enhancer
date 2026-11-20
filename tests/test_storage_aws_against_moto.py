@@ -115,6 +115,18 @@ def test_the_index_returns_one_visitor_newest_first(aws):
     assert mine[1]["id"] == "aaa11111"
 
 
+def test_signing_in_moves_a_browsers_submissions_to_the_account(aws):
+    storage_aws.add_submission(a_submission("aaa11111", "browser-a", "2026-01-01 09:00"))
+    storage_aws.add_submission(a_submission("bbb22222", "browser-a", "2026-01-02 09:00"))
+    storage_aws.add_submission(a_submission("ccc33333", "browser-b", "2026-01-03 09:00"))
+
+    storage_aws.move_submissions("browser-a", "account-1")
+
+    assert [s["id"] for s in storage_aws.get_submissions_for_owner("account-1")] == ["bbb22222", "aaa11111"]
+    assert storage_aws.get_submissions_for_owner("browser-a") == []
+    assert storage_aws.get_submission("ccc33333")["owner_id"] == "browser-b"
+
+
 def test_a_visitor_with_nothing_gets_an_empty_list(aws):
     assert storage_aws.get_submissions_for_owner("nobody") == []
 
