@@ -123,6 +123,37 @@ def test_a_field_set_to_nothing_is_removed_rather_than_stored(table):
     assert "status" in table.updates[0]["ExpressionAttributeNames"].values()
 
 
+# DynamoDB hands back at most 1 MB at a time, with a key to ask for the rest
+class PagedTable(FakeTable):
+    def __init__(self, pages):
+        super().__init__()
+        self.pages = pages
+        self.asked_from = []
+
+    def query(self, **arguments):
+        self.asked_from.append(arguments.get("ExclusiveStartKey"))
+        page = self.pages[len(self.asked_from) - 1]
+        answer = {"Items": page["items"]}
+
+        if "next" in page:
+            answer["LastEvaluatedKey"] = page["next"]
+
+        return answer
+
+
+def test_every_page_of_a_visitors_submissions_is_read(monkeypatch):
+    paged = PagedTable([
+        {"items": [a_row(id="page1row"), a_row(id="page1two")], "next": {"id": "page1two"}},
+        {"items": [a_row(id="page2row")]},
+    ])
+    monkeypatch.setattr(storage_aws, "get_table", lambda: paged)
+
+    ids = [s["id"] for s in storage_aws.get_submissions_for_owner("visitor-one")]
+
+    assert ids == ["page1row", "page1two", "page2row"]
+    assert paged.asked_from == [None, {"id": "page1two"}]
+
+
 def test_updating_nothing_does_nothing(table):
     storage_aws.update_submission("abc12345", {})
 
