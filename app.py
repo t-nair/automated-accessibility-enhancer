@@ -12,6 +12,7 @@ from pathlib import Path
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, send_file
 from werkzeug.utils import secure_filename
 from z_reorder import process_one_file, severity_summary
+import auth
 
 # Where submissions and their files are kept. On AWS that is S3 and DynamoDB, and
 # the pipeline runs in Lambda; on a laptop it is folders and a sqlite file, and the
@@ -75,6 +76,14 @@ app.config.from_prefixed_env()
 
 app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_SIZE_MB * 1024 * 1024
 
+# Lax still sends the cookie when Cognito sends someone back after sign-in, which
+# is a top-level GET, and keeps it off requests other sites start. Secure whenever
+# the public address is HTTPS. Either can still be set with FLASK_ variables.
+app.config.setdefault("SESSION_COOKIE_SAMESITE", "Lax")
+
+if "FLASK_SESSION_COOKIE_SECURE" not in os.environ:
+    app.config["SESSION_COOKIE_SECURE"] = auth.PUBLIC_URL.startswith("https://")
+
 storage.setup()
 
 # how far along each file being processed right now is. Only used when the pipeline
@@ -99,7 +108,8 @@ ORIGINAL_GONE_STEPS = ["Go back to the submit page and upload the presentation a
 
 
 # each browser gets a random id in a cookie, which is how one person's list of files
-# is kept separate from everyone else's. There are no accounts or passwords.
+# is kept separate from everyone else's. Signing in swaps it for the account's
+# Cognito sub, so the list follows the person instead of the browser.
 def get_owner_id():
     if "owner_id" not in session:
         session["owner_id"] = str(uuid.uuid4())
@@ -393,6 +403,16 @@ def csrf_token():
 app.jinja_env.globals["csrf_token"] = csrf_token
 
 
+@app.context_processor
+def sign_in_details():
+    return {
+        "sign_in_available": auth.ENABLED,
+        "signed_in_email": session.get("email"),
+        # set by an upload, and shown once per browser so it is a suggestion, not a nag
+        "show_sign_in_prompt": session.pop("show_sign_in_prompt", False),
+    }
+
+
 @app.before_request
 def check_csrf_token():
     if request.method != "POST":
@@ -500,6 +520,12 @@ def upload():
 
     if len(accepted_ids) == 0:
         return redirect(url_for("home"))
+
+    # Without an account the files are only listed in this browser, so suggest
+    # one, once. Signing in is never required.
+    if auth.ENABLED and not session.get("email") and not session.get("sign_in_suggested"):
+        session["sign_in_suggested"] = True
+        session["show_sign_in_prompt"] = True
 
     # one file goes straight to its own page, several are easier to watch on the status list
     if len(accepted_ids) == 1 and len(problems) == 0:
@@ -618,6 +644,87 @@ def delete(submission_id):
     flash(f"Deleted {submission['original_filename']}.")
 
     return redirect(url_for("status"))
+
+
+# --- sign-in (optional; see auth.py) ---
+
+def sign_in_redirect_uri():
+    if auth.PUBLIC_URL:
+        return auth.PUBLIC_URL + "/auth/callback"
+
+    return url_for("auth_callback", _external=True)
+
+
+@app.route("/auth/sign-in")
+def sign_in():
+    if not auth.ENABLED:
+        return redirect(url_for("home"))
+
+    state, verifier = auth.new_state_and_verifier()
+    session["sign_in_state"] = state
+    session["sign_in_verifier"] = verifier
+
+    return redirect(auth.sign_in_url(sign_in_redirect_uri(), state, verifier,
+                                     create_account=request.args.get("create") == "1"))
+
+
+@app.route("/auth/callback")
+def auth_callback():
+    expected_state = session.pop("sign_in_state", None)
+    verifier = session.pop("sign_in_verifier", None)
+
+    if not auth.ENABLED:
+        return redirect(url_for("home"))
+
+    # someone who closes the sign-in page or presses cancel comes back with an
+    # error instead of a code
+    if request.args.get("error"):
+        logging.info(f"Sign-in did not finish: {request.args.get('error')}.")
+        flash("You were not signed in. Your files are still listed in this browser.")
+        return redirect(url_for("status"))
+
+    sent_state = request.args.get("state", "")
+
+    if not expected_state or not verifier or not secrets.compare_digest(sent_state, expected_state):
+        logging.warning("Sign-in callback rejected: the state did not match this browser's.")
+        flash("That sign-in link had expired. Please sign in again.")
+        return redirect(url_for("status"))
+
+    try:
+        user = auth.user_for_code(request.args.get("code", ""), verifier, sign_in_redirect_uri())
+    except Exception as e:
+        logging.error(f"Sign-in failed while talking to Cognito. Error: {e}")
+        flash("Sign-in did not work. Please try again.")
+        return redirect(url_for("status"))
+
+    browser_owner = session.get("owner_id")
+
+    # a fresh session, so nothing from before sign-in carries over
+    session.clear()
+    session["owner_id"] = user["sub"]
+    session["email"] = user["email"]
+    session["sign_in_suggested"] = True
+    session.permanent = True
+
+    if browser_owner and browser_owner != user["sub"]:
+        storage.move_submissions(browser_owner, user["sub"])
+
+    logging.info(f"Signed in: account {user['sub']}.")
+    flash(f"Signed in as {user['email']}. Files you sent in from this browser are now in your account.")
+
+    return redirect(url_for("status"))
+
+
+@app.route("/auth/sign-out", methods=["POST"])
+def sign_out():
+    session.clear()
+
+    if not auth.ENABLED:
+        return redirect(url_for("home"))
+
+    # Cognito ends its own session too, then sends the person back to the home page
+    home_url = (auth.PUBLIC_URL + "/") if auth.PUBLIC_URL else url_for("home", _external=True)
+    return redirect(auth.sign_out_url(home_url))
 
 
 @app.route("/report/<submission_id>")

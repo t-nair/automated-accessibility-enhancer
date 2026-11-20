@@ -9,15 +9,7 @@
 
     <a href="#main-content" class="skip-link">Skip to main content</a>
 
-    <header>
-        <h1>Accessibility Enhancer</h1>
-        <nav>
-            <ul>
-                <li><a href="{{ url_for('home') }}">Submit a File</a></li>
-                <li><a href="{{ url_for('status') }}">Check Status</a></li>
-            </ul>
-        </nav>
-    </header>
+{% include "_header.html" %}
 
     <main id="main-content">
 
@@ -32,6 +24,10 @@
         {% endwith %}
 
         <h2>Your Submissions</h2>
+
+        {% if sign_in_available and not signed_in_email and submissions|length > 0 %}
+            <p class="sign-in-note">These files are only listed in this browser. <a href="{{ url_for('sign_in', create=1) }}">Create an account</a> or <a href="{{ url_for('sign_in') }}">sign in</a> to keep them.</p>
+        {% endif %}
 
         {% if submissions|length == 0 %}
             <p>You have not submitted any files yet.</p>
@@ -79,6 +75,8 @@
                 </tbody>
             </table>
         {% endif %}
+
+        {% include "_sign_in_prompt.html" %}
 
     </main>
 

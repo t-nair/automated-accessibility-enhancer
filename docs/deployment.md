@@ -16,8 +16,7 @@ The [open decisions](#open-decisions) at the end still need an owner.
 
 ![Production architecture](architecture.svg)
 
-The diagram follows a deck from upload to download. Cognito is drawn dashed
-because sign-in is still being built (#77).
+The diagram follows a deck from upload to download.
 
 | | |
 |---|---|
@@ -25,8 +24,8 @@ because sign-in is still being built (#77).
 | Host | AWS, `us-east-1`: the website on ECS Express Mode, decks processed by Lambda, files in S3, submissions in DynamoDB ([infra/](../infra/README.md)) |
 | Image descriptions | Claude on Amazon Bedrock, in the same AWS account. Local Qwen2-VL is no longer used (#97) |
 | Certificates | Cloudflare issues and renews the one for `accessibilityenhancer.com`. ECS Express Mode issues and renews the one for its own `*.ecs.us-east-1.on.aws` address. Nobody renews anything by hand |
-| Sign-in | Amazon Cognito ([infra/README.md](../infra/README.md#sign-in)), being built in #77: email and password and Google; Microsoft and NetID later. A visitor gets one run without an account and is then asked to sign in or create one |
-| Who can use it | Anyone can create an account; sign-up is not limited to certain email domains for now. Until #77 ships there is no login, and anyone who can reach the site can upload |
+| Sign-in | Optional, with Amazon Cognito ([infra/README.md](../infra/README.md#sign-in)): email and password, or Google; Microsoft and NetID later. Anyone can use the tool without an account; after an upload, the app suggests one once, so their files follow them instead of staying in one browser |
+| Who can use it | Anyone, with or without an account. Sign-up is not limited to certain email domains for now |
 | Deploys | Every merge to `main`, from CI, after a reviewer approves the `production` environment |
 | Owner | @t-nair owns the AWS account, approves production deploys, and watches the bill and the alarms |
 | Backups | Files are versioned in S3 and can be restored for 3 days after they are deleted or overwritten; the submissions table can be restored to any second in the last 35 days ([infra/README.md](../infra/README.md#backups)) |
@@ -109,6 +108,8 @@ python3.12 -m venv .venv
 | `LOG_FILE` | No | Where the log is written as well as the console (default `pipeline.log`; empty for console only) |
 | `MIN_FONT_PT` | No | Font size below which text is reported (default `9`) |
 | `PDF_PIPELINE_CHROME` | Only if Chrome is not on `PATH` | Path to Chrome, Chromium or Edge for PDF export |
+| `COGNITO_DOMAIN`, `COGNITO_CLIENT_ID`, `COGNITO_CLIENT_SECRET` | No | Turn on optional sign-in against a Cognito user pool. On AWS, Terraform sets these (with `COGNITO_CLIENT_SECRET_PARAMETER` in place of the secret). Without them there are no accounts |
+| `PUBLIC_URL` | With sign-in | The address people reach the site at, without a trailing slash. Sign-in redirects are built from it, and the session cookie is marked Secure when it starts with `https://` |
 | `HOST`, `PORT` | No | Address to listen on (default `127.0.0.1:5000`). Keep `127.0.0.1` behind a proxy on the same machine |
 
 Any other `FLASK_`-prefixed variable sets the Flask setting of that name. Do not set

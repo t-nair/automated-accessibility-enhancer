@@ -1,0 +1,22 @@
+    <header>
+        <h1>Accessibility Enhancer</h1>
+        <nav aria-label="Main">
+            <ul>
+                <li><a href="{{ url_for('home') }}">Submit a File</a></li>
+                <li><a href="{{ url_for('status') }}">Check Status</a></li>
+                {% if sign_in_available %}
+                    {% if signed_in_email %}
+                        <li class="account">
+                            <span>Signed in as {{ signed_in_email }}</span>
+                            <form action="{{ url_for('sign_out') }}" method="POST" class="sign-out-form">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="link-button">Sign out</button>
+                            </form>
+                        </li>
+                    {% else %}
+                        <li class="account"><a href="{{ url_for('sign_in') }}">Sign in</a></li>
+                    {% endif %}
+                {% endif %}
+            </ul>
+        </nav>
+    </header>
