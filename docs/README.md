@@ -13,6 +13,8 @@
 - [Deploying](deployment.md): your own server, how production runs on AWS, and open decisions
 - [AWS infrastructure](../infra/README.md): Terraform, CI deploys, sign-in, backups and restores, alarms
 - [Contributing](../CONTRIBUTING.md): setup, tests and pull requests
+- [Cost report](cost-report.docx): monthly AWS cost and credit runway by scenario and planned feature (Word)
+- [Cost estimator](cost_estimator.ipynb): the notebook behind the report; change the parameters and rerun
 
 ## How it works
 
