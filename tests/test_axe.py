@@ -51,8 +51,9 @@ def base_url(tmp_path_factory):
     patch.setattr(storage_module, "DATABASE_FILE", str(folder / "submissions.db"))
     patch.setattr(app_module, "start_processing", lambda submission_id, saved_name: None)
 
-    # sign-in on, so the header's account links and the sign-in suggestion are audited
-    # too. Nothing here ever goes to Cognito.
+    # sign-in on, so the header's account links are audited too. Every visitor below
+    # is signed in, since the site sends anyone else to sign in. Nothing here ever
+    # goes to Cognito.
     patch.setattr(auth, "ENABLED", True)
     storage_module.setup()
 
@@ -112,7 +113,6 @@ STATES = [
     ("details processing", "/details/process1", None, True),
     ("details done with report", "/details/done0001", None, True),
     ("details failed", "/details/error001", None, True),
-    ("status signed in", "/status", None, {"email": "prof@uw.edu"}),
 ]
 
 
@@ -121,11 +121,11 @@ def test_page_has_no_axe_violations(base_url, browser, axe_source, path, action,
     # a zero-width viewport hides colours from axe, so always set a real one
     context = browser.new_context(viewport={"width": 1280, "height": 900})
 
-    # True is a visitor who owns the submissions; a dict adds more to their session
-    if as_owner:
-        extras = as_owner if isinstance(as_owner, dict) else {}
-        cookie = app_module.app.session_interface.get_signing_serializer(app_module.app).dumps({"owner_id": OWNER_ID, **extras})
-        context.add_cookies([{"name": app_module.app.config["SESSION_COOKIE_NAME"], "value": cookie, "url": base_url}])
+    # every visitor is signed in; True is the one who owns the submissions
+    owner_id = OWNER_ID if as_owner else "someone-with-no-files"
+    cookie = app_module.app.session_interface.get_signing_serializer(app_module.app).dumps(
+        {"owner_id": owner_id, "email": "prof@uw.edu"})
+    context.add_cookies([{"name": app_module.app.config["SESSION_COOKIE_NAME"], "value": cookie, "url": base_url}])
 
     page = context.new_page()
     page.goto(base_url + path)
