@@ -42,7 +42,9 @@ ALLOWED_EXTENSIONS = (".pptx", ".ppt")
 
 # process_one_file also moves the original upload into the output folder, but
 # that copy is already sitting in the uploads bucket, so it is not sent back.
-RESULT_SUFFIXES = ("_updated.pptx", "_alt_text")
+# The .json is the report arranged by slide, which the details page shows as its
+# summary and slide by slide view; without it the page falls back to plain text.
+RESULT_SUFFIXES = ("_updated.pptx", "_alt_text", "_alt_text.json")
 
 s3 = boto3.client("s3")
 

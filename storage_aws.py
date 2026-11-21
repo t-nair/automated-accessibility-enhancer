@@ -261,6 +261,7 @@ def processed_names(saved_name):
         "copy": saved_name,
         "fixed": name_without_extension + "_updated.pptx",
         "report": name_without_extension + "_alt_text",
+        "report_data": name_without_extension + "_alt_text.json",
     }
 
 
@@ -270,7 +271,7 @@ def delete_submission_files(submission):
 
     delete_object(s3, UPLOADS_BUCKET, names["upload"])
 
-    for key in ("copy", "fixed", "report"):
+    for key in ("copy", "fixed", "report", "report_data"):
         delete_object(s3, PROCESSED_BUCKET, names[key])
 
 
