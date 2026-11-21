@@ -7,7 +7,8 @@ saying whether it worked, so the frontend can show the result without needing
 to talk to the function itself.
 
 Nothing here is specific to Lambda beyond moving files in and out of S3. The
-actual work is `z_reorder.process_one_file`, exactly as `app.py` calls it.
+actual work is `z_reorder.process_one_file` for a deck and
+`pdf_runner.process_one_pdf` for a PDF, exactly as `app.py` calls them.
 """
 
 import os
@@ -20,6 +21,7 @@ import urllib.parse
 import boto3
 
 from z_reorder import process_one_file
+from pdf_runner import process_one_pdf
 
 # z_reorder calls logging.basicConfig(filename=...) when it is imported, which
 # is a no-op here: the Lambda runtime has already put a handler on the root
@@ -38,13 +40,26 @@ SUBMISSIONS_TABLE = os.environ.get("SUBMISSIONS_TABLE", "")
 # the only writable place in a Lambda container
 WORK_ROOT = "/tmp/work"
 
-ALLOWED_EXTENSIONS = (".pptx", ".ppt")
+ALLOWED_EXTENSIONS = (".pptx", ".ppt", ".pdf")
 
 # process_one_file also moves the original upload into the output folder, but
 # that copy is already sitting in the uploads bucket, so it is not sent back.
 # The .json is the report arranged by slide, which the details page shows as its
 # summary and slide by slide view; without it the page falls back to plain text.
 RESULT_SUFFIXES = ("_updated.pptx", "_alt_text", "_alt_text.json")
+
+# a PDF's results go in a "<name>_pdf" folder next to its report, the same layout
+# storage_local.py uses, so storage_aws.py can find them by name. The extracted
+# images and the image review file stay behind: nothing on the site reads them.
+PDF_RESULT_SUFFIXES = (".accessible.pdf", ".accessible.html", ".remediation.json")
+
+
+def is_pdf(filename):
+    return filename.lower().endswith(".pdf")
+
+
+def pdf_folder_name(filename):
+    return os.path.splitext(filename)[0] + "_pdf"
 
 s3 = boto3.client("s3")
 
@@ -157,7 +172,7 @@ def process_one_object(bucket, key):
     filename = os.path.basename(key)
 
     if not filename.lower().endswith(ALLOWED_EXTENSIONS):
-        logging.warning(f"Ignoring {key}: not a .pptx or .ppt file.")
+        logging.warning(f"Ignoring {key}: not a .pptx, .ppt or .pdf file.")
         return None
 
     input_folder = os.path.join(WORK_ROOT, "input")
@@ -191,9 +206,19 @@ def process_one_object(bucket, key):
         s3.download_file(bucket, key, download_path)
         logging.info(f"Downloaded s3://{bucket}/{key}")
 
-        was_successful, message, steps = process_one_file(
-            filename, input_folder, output_folder, report_progress, read_language(submission_id)
-        )
+        language = read_language(submission_id)
+
+        if is_pdf(filename):
+            # the upload is saved as "<id>_<original name>", so drop the id for the title
+            original_filename = filename.split("_", 1)[1] if submission_id else filename
+            was_successful, message, steps = process_one_pdf(
+                filename, input_folder, os.path.join(output_folder, pdf_folder_name(filename)), output_folder,
+                original_filename, report_progress, language,
+            )
+        else:
+            was_successful, message, steps = process_one_file(
+                filename, input_folder, output_folder, report_progress, language
+            )
 
         if was_successful:
             upload_results(key, output_folder)
@@ -204,9 +229,14 @@ def process_one_object(bucket, key):
         return was_successful, message, steps
     except Exception as e:
         logging.error(f"Unexpected problem while processing {key}. Error: {e}")
+        if is_pdf(filename):
+            second_step = "If it fails again, contact the accessibility team."
+        else:
+            second_step = "If it fails again, open the file in PowerPoint and save it as a new .pptx."
+
         write_outcome(submission_id, key, False, "Something went wrong while processing this file.", [
             "Try again from the submission page.",
-            "If it fails again, open the file in PowerPoint and save it as a new .pptx.",
+            second_step,
         ])
         raise
     finally:
@@ -231,14 +261,21 @@ def upload_results(key, output_folder):
     """Copy the fixed deck and its report to the processed bucket.
 
     They keep the uploaded key's folder, so a deck at `abc123/lecture.pptx`
-    produces `abc123/lecture_updated.pptx` and `abc123/lecture_alt_text`.
+    produces `abc123/lecture_updated.pptx` and `abc123/lecture_alt_text`, and a
+    PDF at `abc123/notes.pdf` produces `abc123/notes_alt_text` and
+    `abc123/notes_pdf/notes.accessible.pdf`.
     """
     prefix = os.path.dirname(key)
+    to_upload = [name for name in os.listdir(output_folder) if name.endswith(RESULT_SUFFIXES)]
 
-    for produced in sorted(os.listdir(output_folder)):
-        if not produced.endswith(RESULT_SUFFIXES):
-            continue
+    pdf_folder = pdf_folder_name(os.path.basename(key))
 
+    if is_pdf(key) and os.path.isdir(os.path.join(output_folder, pdf_folder)):
+        for name in os.listdir(os.path.join(output_folder, pdf_folder)):
+            if name.endswith(PDF_RESULT_SUFFIXES):
+                to_upload.append(pdf_folder + "/" + name)
+
+    for produced in sorted(to_upload):
         destination = produced if not prefix else prefix + "/" + produced
 
         s3.upload_file(

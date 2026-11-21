@@ -253,16 +253,29 @@ def delete_submission(submission_id):
     get_table().delete_item(Key={"id": submission_id})
 
 
+def is_pdf(filename):
+    return filename.lower().endswith(".pdf")
+
+
+# the Lambda puts a PDF's results in "<name>_pdf/", the same layout as storage_local.py
 def processed_names(saved_name):
     name_without_extension = os.path.splitext(saved_name)[0]
-
-    return {
+    names = {
         "upload": saved_name,
         "copy": saved_name,
         "fixed": name_without_extension + "_updated.pptx",
         "report": name_without_extension + "_alt_text",
         "report_data": name_without_extension + "_alt_text.json",
+        "extra": [],
     }
+
+    if is_pdf(saved_name):
+        folder = name_without_extension + "_pdf/" + name_without_extension
+        names["fixed"] = folder + ".accessible.pdf"
+        # the Lambda's PDF_RESULT_SUFFIXES, apart from the PDF itself
+        names["extra"] = [folder + ".accessible.html", folder + ".remediation.json"]
+
+    return names
 
 
 def delete_submission_files(submission):
@@ -271,8 +284,8 @@ def delete_submission_files(submission):
 
     delete_object(s3, UPLOADS_BUCKET, names["upload"])
 
-    for key in ("copy", "fixed", "report", "report_data"):
-        delete_object(s3, PROCESSED_BUCKET, names[key])
+    for key in [names["copy"], names["fixed"], names["report"], names["report_data"]] + names["extra"]:
+        delete_object(s3, PROCESSED_BUCKET, key)
 
 
 def delete_object(s3, bucket, key):
@@ -329,8 +342,9 @@ def read_report_data(submission):
 
 def send_processed_file(submission):
     names = processed_names(submission["saved_filename"])
-    # the result is always a .pptx, even when an old .ppt was uploaded
-    download_name = "accessible_" + os.path.splitext(submission["original_filename"])[0] + ".pptx"
+    # a deck always comes back as a .pptx, even when an old .ppt was uploaded
+    extension = ".pdf" if is_pdf(submission["saved_filename"]) else ".pptx"
+    download_name = "accessible_" + os.path.splitext(submission["original_filename"])[0] + extension
 
     link = get_s3().generate_presigned_url(
         "get_object",

@@ -249,3 +249,37 @@ def test_a_retry_puts_the_upload_back_so_the_pipeline_runs_again(aws):
 
     assert stored["Body"].read() == b"deck"
     assert "retried_at" in stored["Metadata"]
+
+
+def a_pdf_submission():
+    submission = a_submission()
+    submission["original_filename"] = "Notes.pdf"
+    submission["saved_filename"] = "abc12345_Notes.pdf"
+
+    return submission
+
+
+def test_a_finished_pdf_is_offered_as_a_pdf(aws):
+    assert storage_aws.processed_file_is_ready(a_pdf_submission()) is False
+
+    aws.put_object(Bucket=PROCESSED, Key="abc12345_Notes_pdf/abc12345_Notes.accessible.pdf", Body=b"pdf")
+
+    assert storage_aws.processed_file_is_ready(a_pdf_submission()) is True
+
+    link = storage_aws.send_processed_file(a_pdf_submission()).headers["Location"]
+
+    assert "abc12345_Notes_pdf/abc12345_Notes.accessible.pdf" in link
+    assert "accessible_Notes.pdf" in link
+
+
+def test_deleting_a_pdf_submission_clears_its_result_folder(aws):
+    storage_aws.save_upload(io.BytesIO(b"pdf"), "abc12345_Notes.pdf")
+    aws.put_object(Bucket=PROCESSED, Key="abc12345_Notes_alt_text", Body=b"report")
+
+    for suffix in (".accessible.pdf", ".accessible.html", ".remediation.json"):
+        aws.put_object(Bucket=PROCESSED, Key="abc12345_Notes_pdf/abc12345_Notes" + suffix, Body=b"x")
+
+    storage_aws.delete_submission_files(a_pdf_submission())
+
+    assert storage_aws.upload_exists("abc12345_Notes.pdf") is False
+    assert aws.list_objects_v2(Bucket=PROCESSED).get("KeyCount") == 0

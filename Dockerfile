@@ -13,9 +13,14 @@ FROM python:3.12-slim-bookworm
 
 # Only the presentation part of LibreOffice, and none of what it merely
 # recommends, which would pull in the rest of the office suite and a desktop.
+# Chromium prints a rebuilt PDF from its tagged HTML (pipeline/chrome_pdf.py
+# already runs it headless and without a sandbox). libgl1 and libglib2.0-0 are
+# what opencv-python, pulled in by the OCR package, needs to load.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libreoffice-impress \
+    && apt-get install -y --no-install-recommends libreoffice-impress chromium libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
+
+ENV PDF_PIPELINE_CHROME=/usr/bin/chromium
 
 # LibreOffice writes a user profile the first time it runs, and /tmp is the only
 # writable place in a Lambda container. Without this the conversion fails with a
@@ -31,10 +36,13 @@ WORKDIR /var/task
 # Copied and installed on its own so that editing the pipeline does not
 # invalidate the layer holding the dependencies
 COPY requirements.txt ./
+COPY pipeline/requirements.txt pipeline/
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt awslambdaric
+    && pip install --no-cache-dir -r requirements.txt -r pipeline/requirements.txt awslambdaric
 
-COPY z_reorder.py lambda_handler.py title_detection.py title_model.joblib ./
+# pipeline/ carries the OCR model it checks by hash, so nothing is downloaded at run time
+COPY pipeline/ pipeline/
+COPY z_reorder.py pdf_runner.py lambda_handler.py title_detection.py title_model.joblib ./
 
 # awslambdaric is the part that talks to Lambda. It is given the handler to call
 # for each event, in the same module.function form Lambda uses everywhere else.
