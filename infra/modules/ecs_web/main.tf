@@ -114,6 +114,31 @@ data "aws_iam_policy_document" "task" {
       resources = [var.cognito.client_secret_parameter_arn]
     }
   }
+
+  # "Report a bug": email the team through SES from the verified domain, and read
+  # the GitHub token that opens the matching public issue. SESv2 SendEmail with a
+  # raw message is checked against both actions.
+  dynamic "statement" {
+    for_each = var.bug_reports == null ? [] : [1]
+
+    content {
+      sid       = "EmailBugReports"
+      effect    = "Allow"
+      actions   = ["ses:SendEmail", "ses:SendRawEmail"]
+      resources = [var.bug_reports.ses_identity_arn]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.bug_reports == null ? [] : [1]
+
+    content {
+      sid       = "ReadTheGitHubIssuesToken"
+      effect    = "Allow"
+      actions   = ["ssm:GetParameter"]
+      resources = [var.bug_reports.github_token_parameter_arn]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "task" {
@@ -219,6 +244,12 @@ resource "aws_ecs_express_gateway_service" "this" {
           COGNITO_CLIENT_ID               = var.cognito.client_id
           COGNITO_CLIENT_SECRET_PARAMETER = var.cognito.client_secret_parameter_name
           COGNITO_GOOGLE                  = tostring(var.cognito.google_enabled)
+        },
+        var.bug_reports == null ? {} : {
+          BUG_REPORT_TO                 = var.bug_reports.send_to
+          BUG_REPORT_FROM               = var.bug_reports.send_from
+          BUG_REPORT_GITHUB_REPO        = var.bug_reports.github_repository
+          GITHUB_ISSUES_TOKEN_PARAMETER = var.bug_reports.github_token_parameter_name
         },
       )
 

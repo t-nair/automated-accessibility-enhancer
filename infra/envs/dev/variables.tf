@@ -204,3 +204,9 @@ variable "email_domain_verified" {
   type        = bool
   default     = false
 }
+
+variable "bug_report_to" {
+  description = "Inbox the \"Report a bug\" form emails. Sent once email_domain is verified."
+  type        = string
+  default     = "hello@accessibilityenhancer.com"
+}

@@ -366,3 +366,27 @@ if (slideViewer) {
 }
 
 
+
+
+// the "Report a bug" dialog in the header. showModal() keeps focus inside it and
+// closes it on Escape; the browser puts focus back on the button afterwards.
+const reportBugButton = document.getElementById("report-bug-button");
+const reportBugDialog = document.getElementById("report-bug-dialog");
+
+if (reportBugButton && reportBugDialog) {
+    const attachments = document.getElementById("bug-attachments");
+
+    reportBugButton.addEventListener("click", function () {
+        reportBugDialog.showModal();
+    });
+
+    document.getElementById("report-bug-cancel").addEventListener("click", function () {
+        reportBugDialog.close();
+    });
+
+    // the server checks this too; this just says so before anything is sent
+    attachments.addEventListener("change", function () {
+        attachments.setCustomValidity(attachments.files.length > 3 ? "Choose at most 3 files." : "");
+        attachments.reportValidity();
+    });
+}

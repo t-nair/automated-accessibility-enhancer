@@ -13,7 +13,7 @@ COPY pipeline/requirements.txt pipeline/
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements-web.txt
 
-COPY app.py auth.py pdf_runner.py storage_local.py storage_aws.py z_reorder.py title_detection.py title_model.joblib ./
+COPY app.py auth.py bug_reports.py pdf_runner.py storage_local.py storage_aws.py z_reorder.py title_detection.py title_model.joblib ./
 COPY pipeline/ pipeline/
 COPY templates/ templates/
 COPY static/ static/

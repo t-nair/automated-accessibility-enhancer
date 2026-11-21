@@ -47,3 +47,9 @@ output "email_dkim_records" {
 output "google_enabled" {
   value = local.google_enabled
 }
+
+# the SES domain identity, for the website's bug-report emails. Null until the
+# domain is set and verified, the same rule Cognito itself follows.
+output "email_identity_arn" {
+  value = local.use_ses ? aws_sesv2_email_identity.this[0].arn : null
+}

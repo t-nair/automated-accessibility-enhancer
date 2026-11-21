@@ -39,7 +39,14 @@ locals {
   # observability module can create the log group and the lambda module can
   # scope its logging permission to it without the two depending on each other
   function_name = "${local.name_prefix}-pipeline"
+
+  # a fine-grained GitHub token, this repository only, "Issues: write" only. Made
+  # by hand so it never passes through Terraform state.
+  github_issues_token_parameter = "/${var.project}/${var.environment}/github-issues-token"
 }
+
+data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
 
 module "buckets" {
   source = "../../modules/s3_buckets"
@@ -182,6 +189,17 @@ module "website" {
     client_secret_parameter_name = module.auth.client_secret_parameter_name
     client_secret_parameter_arn  = module.auth.client_secret_parameter_arn
     google_enabled               = module.auth.google_enabled
+  }
+
+  # waits for the same verified SES domain the sign-in emails use. The GitHub token
+  # is made by hand (see infra/README.md); until it exists reports are still emailed.
+  bug_reports = module.auth.email_identity_arn == null ? null : {
+    send_to                     = var.bug_report_to
+    send_from                   = "Accessibility Enhancer <no-reply@${var.email_domain}>"
+    ses_identity_arn            = module.auth.email_identity_arn
+    github_repository           = var.github_repository
+    github_token_parameter_name = local.github_issues_token_parameter
+    github_token_parameter_arn  = "arn:aws:ssm:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:parameter${local.github_issues_token_parameter}"
   }
 
   cpu                = var.web_cpu
