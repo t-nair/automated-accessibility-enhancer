@@ -101,7 +101,7 @@ data "aws_iam_policy_document" "task" {
     resources = [var.secret_key_parameter_arn]
   }
 
-  # the Cognito app client secret, for exchanging a sign-in code for tokens
+  # the Cognito app client secret, for password sign-in and for exchanging a Google sign-in code
   dynamic "statement" {
     for_each = var.cognito == null ? [] : [1]
 
@@ -218,6 +218,7 @@ resource "aws_ecs_express_gateway_service" "this" {
           COGNITO_DOMAIN                  = var.cognito.domain_url
           COGNITO_CLIENT_ID               = var.cognito.client_id
           COGNITO_CLIENT_SECRET_PARAMETER = var.cognito.client_secret_parameter_name
+          COGNITO_GOOGLE                  = tostring(var.cognito.google_enabled)
         },
       )
 

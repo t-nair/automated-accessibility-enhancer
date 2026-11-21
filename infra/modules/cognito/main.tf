@@ -2,9 +2,10 @@
 #
 # Cognito holds the accounts, hashes the passwords, verifies email addresses,
 # resets forgotten passwords and locks out repeated guesses, so the website does
-# none of that itself. The website sends people to Cognito's own sign-in pages
-# (managed login) and gets them back with an authorization code, the usual OIDC
-# flow. Accounts are keyed by Cognito's `sub`, never by email (see #77).
+# none of that itself. Email and password are typed into the website's own pages,
+# which pass them to Cognito's API. Google goes through Cognito's OAuth endpoints
+# and comes back with an authorization code, the usual OIDC flow. Accounts are
+# keyed by Cognito's `sub`, never by email (see #77).
 #
 # Google is added only once its client id is set, so the pool works with email
 # and password alone until that app is registered. Microsoft is left off for now
@@ -127,8 +128,9 @@ resource "aws_cognito_user_pool_client" "web" {
   logout_urls                          = var.logout_urls
   supported_identity_providers         = local.identity_providers
 
-  # sign-in only happens on Cognito's pages, never by sending a password to the API
-  explicit_auth_flows = ["ALLOW_REFRESH_TOKEN_AUTH"]
+  # the website's own sign-in page sends the email and password to InitiateAuth,
+  # over HTTPS, with the client secret's hash
+  explicit_auth_flows = ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]
 
   prevent_user_existence_errors = "ENABLED"
   enable_token_revocation       = true

@@ -627,6 +627,60 @@ nav .account {
     background: none;
 }
 
+/* the same, inside a sentence on the white page */
+.link-button.inline {
+    color: #1c3d5a;
+}
+
+.link-button.inline:hover {
+    color: #14293d;
+}
+
+/* --- sign-in and account pages --- */
+
+.account input[type="email"],
+.account input[type="password"],
+.account input[type="text"] {
+    display: block;
+    width: 100%;
+    max-width: 360px;
+    box-sizing: border-box;
+    padding: 8px;
+    font-size: 1em;
+    border: 1px solid #555;
+    margin-bottom: 15px;
+}
+
+.account input:focus {
+    outline: 3px solid #ffbf47;
+    outline-offset: 1px;
+}
+
+.account .help-text {
+    margin-top: -10px;
+    margin-bottom: 15px;
+}
+
+.account-or {
+    margin-top: 25px;
+    color: #555;
+}
+
+/* a link that looks like an outlined button */
+.button-link.secondary {
+    display: inline-block;
+    background-color: white;
+    color: #1c3d5a;
+    border: 2px solid #1c3d5a;
+    padding: 8px 18px;
+    text-decoration: none;
+}
+
+.button-link.secondary:hover {
+    background-color: #eef3f8;
+}
+
+.button-link:focus,
 .link-button:focus {
     outline: 3px solid #ffbf47;
     outline-offset: 2px;

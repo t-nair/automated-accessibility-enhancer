@@ -114,6 +114,7 @@ variable "cognito" {
     client_id                    = string
     client_secret_parameter_name = string
     client_secret_parameter_arn  = string
+    google_enabled               = bool
   })
   default = null
 }
