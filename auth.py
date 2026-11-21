@@ -1,5 +1,5 @@
-# Sign-in with Amazon Cognito (#77). Optional: anyone can use the tool without an
-# account, and signing in only means their files follow them to another browser.
+# Sign-in with Amazon Cognito (#77). When it is turned on, every page needs an
+# account (see require_sign_in in app.py).
 #
 # The standard OAuth authorization code flow with PKCE, done with the standard
 # library. After the code is exchanged, the person's id and email come from
@@ -7,8 +7,8 @@
 # be decoded or verified here.
 #
 # Turned on by the COGNITO_* variables Terraform gives the website. Without them
-# (a laptop, or a server of your own) everything works as before, with the
-# signed-cookie identity alone.
+# (a laptop, or a server of your own) the site is open, with the signed-cookie
+# identity alone.
 
 import base64
 import hashlib
@@ -33,7 +33,7 @@ _client_secret = None
 
 
 # read once, on the first sign-in rather than at startup, so a problem with
-# Parameter Store cannot stop the site from serving people who never sign in
+# Parameter Store does not stop the container from starting
 def client_secret():
     global _client_secret
 

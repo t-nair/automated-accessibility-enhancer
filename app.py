@@ -408,9 +408,27 @@ def sign_in_details():
     return {
         "sign_in_available": auth.ENABLED,
         "signed_in_email": session.get("email"),
-        # set by an upload, and shown once per browser so it is a suggestion, not a nag
-        "show_sign_in_prompt": session.pop("show_sign_in_prompt", False),
     }
+
+
+# pages anyone can reach: the sign-in round trip itself, styles, and the health check
+OPEN_ENDPOINTS = {"sign_in", "auth_callback", "static", "health"}
+
+
+# With Cognito on, every page needs an account. Runs before the CSRF check, so
+# someone signed out is sent to sign in instead of being told a form expired.
+# Without Cognito (a laptop, a server of your own) the site stays open.
+@app.before_request
+def require_sign_in():
+    if not auth.ENABLED or session.get("email") or request.endpoint in OPEN_ENDPOINTS:
+        return None
+
+    return redirect(url_for("sign_in"))
+
+
+@app.route("/health")
+def health():
+    return "ok"
 
 
 @app.before_request
@@ -520,12 +538,6 @@ def upload():
 
     if len(accepted_ids) == 0:
         return redirect(url_for("home"))
-
-    # Without an account the files are only listed in this browser, so suggest
-    # one, once. Signing in is never required.
-    if auth.ENABLED and not session.get("email") and not session.get("sign_in_suggested"):
-        session["sign_in_suggested"] = True
-        session["show_sign_in_prompt"] = True
 
     # one file goes straight to its own page, several are easier to watch on the status list
     if len(accepted_ids) == 1 and len(problems) == 0:
@@ -646,7 +658,7 @@ def delete(submission_id):
     return redirect(url_for("status"))
 
 
-# --- sign-in (optional; see auth.py) ---
+# --- sign-in (required when Cognito is on; see auth.py) ---
 
 def sign_in_redirect_uri():
     if auth.PUBLIC_URL:
@@ -668,6 +680,13 @@ def sign_in():
                                      create_account=request.args.get("create") == "1"))
 
 
+# A sign-in that did not finish stops on a page of its own. Redirecting anywhere
+# else would hit require_sign_in, go back to Cognito, and, if Cognito still has a
+# session, come straight back here: a loop with nothing to stop it.
+def sign_in_stopped(message, status):
+    return render_template("sign_in_problem.html", message=message), status
+
+
 @app.route("/auth/callback")
 def auth_callback():
     expected_state = session.pop("sign_in_state", None)
@@ -680,22 +699,19 @@ def auth_callback():
     # error instead of a code
     if request.args.get("error"):
         logging.info(f"Sign-in did not finish: {request.args.get('error')}.")
-        flash("You were not signed in. Your files are still listed in this browser.")
-        return redirect(url_for("status"))
+        return sign_in_stopped("You were not signed in. Please sign in to use the site.", 400)
 
     sent_state = request.args.get("state", "")
 
     if not expected_state or not verifier or not secrets.compare_digest(sent_state, expected_state):
         logging.warning("Sign-in callback rejected: the state did not match this browser's.")
-        flash("That sign-in link had expired. Please sign in again.")
-        return redirect(url_for("status"))
+        return sign_in_stopped("That sign-in link had expired. Please sign in again.", 400)
 
     try:
         user = auth.user_for_code(request.args.get("code", ""), verifier, sign_in_redirect_uri())
     except Exception as e:
         logging.error(f"Sign-in failed while talking to Cognito. Error: {e}")
-        flash("Sign-in did not work. Please try again.")
-        return redirect(url_for("status"))
+        return sign_in_stopped("Sign-in did not work. Please try again.", 502)
 
     # Only an anonymous browser's files move. If someone was already signed in here
     # (a shared computer, nobody signed out), their files stay in their account.
@@ -705,7 +721,6 @@ def auth_callback():
     session.clear()
     session["owner_id"] = user["sub"]
     session["email"] = user["email"]
-    session["sign_in_suggested"] = True
     session.permanent = True
 
     if browser_owner and browser_owner != user["sub"]:
