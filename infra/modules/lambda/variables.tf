@@ -40,29 +40,17 @@ variable "processed_bucket_arn" {
 }
 
 variable "bedrock_model_id" {
-  description = "Claude model used for captioning. Model IDs on Bedrock carry an anthropic. prefix."
+  description = "Claude model that writes image descriptions: a Bedrock inference profile id, with \"us.\" in front and a version on the end. Haiku 4.5 is what production runs; Opus 5 costs about eight times as much per picture (see docs/cost-report.docx)."
   type        = string
-  default     = "anthropic.claude-opus-5"
+  default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
 variable "bedrock_region" {
-  description = "Region Bedrock requests are sent to. Has to be one that serves the bedrock-mantle endpoint, which is not every region."
+  description = "Region Bedrock requests are sent to, where the inference profile lives. Asking us-west-2 or us-east-2 for these models answers that the model does not exist."
   type        = string
-  default     = "us-west-2"
+  default     = "us-east-1"
 }
 
-variable "bedrock_model_arns" {
-  description = <<-DESC
-    Model ARNs the function is allowed to run inference against.
-
-    Defaults to * because AWS does not currently publish the resource ARN
-    format for bedrock-mantle:CreateInference. Narrow it to the specific model
-    once that is confirmed for the account: run the pipeline once and read the
-    resource off the CloudTrail event for the call.
-  DESC
-  type        = list(string)
-  default     = ["*"]
-}
 
 variable "timeout_seconds" {
   description = "How long one deck may take. 900 is the Lambda maximum."

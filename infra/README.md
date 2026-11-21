@@ -433,9 +433,6 @@ link AWS sends. Terraform cannot do that for them.
 
 These are deliberate, not oversights:
 
-- **`bedrock_model_arns` defaults to `*`.** AWS does not currently publish the
-  resource ARN format for `bedrock-mantle:CreateInference`. Run the pipeline
-  once, read the resource off the CloudTrail event, then narrow the variable.
 - **Dependencies are unpinned.** `requirements.txt` has no versions, so two
   builds of the same commit can differ. Worth pinning before this is relied on.
 - **`image_tag` defaults to `latest`.** CI always passes the commit, so this
