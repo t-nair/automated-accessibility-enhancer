@@ -614,14 +614,15 @@ def report_bug():
         flash("You have sent several bug reports in the last hour. Please wait a while, or email hello@accessibilityenhancer.com.")
         return back
 
-    attachments = [(name, f.read()) for name, f in zip(names, files)]
     facts = {"Page": return_to, "Browser": request.headers.get("User-Agent", "unknown")[:200]}
 
+    # reading is inside too, so a file that cannot be read gives the slot back like a failed email
     try:
+        attachments = [(name, f.read()) for name, f in zip(names, files)]
         bug_id = bug_reports.send(session.get("email"), subject, description, attachments, facts)
     except Exception as e:
         give_back_bug_report_slot(owner, slot)
-        logging.error(f"A bug report could not be emailed. Error: {e}")
+        logging.error(f"A bug report could not be sent. Error: {e}")
         flash("Sorry, the bug report could not be sent. Please email it to hello@accessibilityenhancer.com instead.")
         return back
 
