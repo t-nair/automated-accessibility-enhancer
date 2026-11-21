@@ -71,8 +71,9 @@ def pdf_error_details(manifest_path, error):
             "Ask the accessibility team to run the PDF command-line tool with an approved image review file.",
         ]
 
-    if isinstance(error, RuntimeError):
-        # these messages come from the pipeline's own checks and say what stopped it
+    # these messages come from the pipeline's own checks and say what stopped it.
+    # inspect_pdf raises ValueError for an encrypted file or one that is not a PDF.
+    if isinstance(error, (RuntimeError, ValueError)):
         return False, f"We could not rebuild this PDF: {error}", [
             "If the PDF is signed or password protected, upload an unsigned, unlocked copy.",
             "Otherwise contact the accessibility team, who can review it by hand.",
