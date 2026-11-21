@@ -21,7 +21,8 @@ The diagram follows a deck from upload to download.
 | | |
 |---|---|
 | Address | `https://accessibilityenhancer.com/app` ("Try the tool" on the project site) |
-| Host | AWS, `us-east-1`: the website on ECS Express Mode, decks processed by Lambda, files in S3, submissions in DynamoDB ([infra/](../infra/README.md)) |
+| Host | AWS, `us-east-1`: the website on ECS Express Mode, decks and PDFs processed by Lambda, files in S3, submissions in DynamoDB ([infra/](../infra/README.md)) |
+| PDFs | The same Lambda image carries `pipeline/`, its OCR model and Chromium (`PDF_PIPELINE_CHROME=/usr/bin/chromium`). S3 starts it for `.pdf` as well as `.pptx` and `.ppt`. A PDF's results go to `<name>_pdf/` in the processed bucket, next to its `<name>_alt_text` report. PDFs with images still stop for a person to approve the descriptions, as they do locally (#147) |
 | Image descriptions | Claude on Amazon Bedrock, in the same AWS account. Local Qwen2-VL is no longer used (#97) |
 | Certificates | Cloudflare issues and renews the one for `accessibilityenhancer.com`. ECS Express Mode issues and renews the one for its own `*.ecs.us-east-1.on.aws` address. Nobody renews anything by hand |
 | Sign-in | Required, on the site's own pages, with Amazon Cognito behind them ([infra/README.md](../infra/README.md#sign-in)): email and password, or Google; Microsoft and NetID later. Every page except the account pages and `/health` sends a signed-out visitor to sign in |
