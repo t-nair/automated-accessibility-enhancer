@@ -627,69 +627,7 @@ nav .account {
     background: none;
 }
 
-.link-button.dark {
-    color: #1c3d5a;
-}
-
-.link-button.dark:hover {
-    color: #14293d;
-}
-
-/* a link that looks like the page's buttons */
-.button-link {
-    display: inline-block;
-    background-color: #1c3d5a;
-    color: white;
-    padding: 10px 20px;
-    text-decoration: none;
-}
-
-.button-link:hover {
-    background-color: #14293d;
-}
-
-.button-link.secondary {
-    background-color: white;
-    color: #1c3d5a;
-    border: 2px solid #1c3d5a;
-    padding: 8px 18px;
-}
-
-.button-link:focus,
 .link-button:focus {
     outline: 3px solid #ffbf47;
     outline-offset: 2px;
-}
-
-#sign-in-prompt {
-    max-width: 480px;
-    border: none;
-    padding: 24px;
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
-}
-
-#sign-in-prompt::backdrop {
-    background: rgba(0, 0, 0, 0.45);
-}
-
-#sign-in-prompt h2 {
-    margin-top: 0;
-}
-
-.dialog-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    align-items: center;
-    margin-top: 20px;
-}
-
-.dialog-actions form {
-    margin-left: auto;
-}
-
-.sign-in-note {
-    background-color: #eef3f8;
-    border-left: 4px solid #1c3d5a;
-    padding: 10px 15px;
 }

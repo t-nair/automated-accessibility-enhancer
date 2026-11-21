@@ -200,9 +200,9 @@ terraform apply -var image_tag=<tag>
 
 Accounts are in an Amazon Cognito user pool (`modules/cognito`, #77). The website
 sends people to Cognito's sign-in pages and gets them back at
-`<public_url>/auth/callback` ([auth.py](../auth.py)). Signing in is optional: anyone
-can use the tool without an account, and signing in moves the files their browser
-sent in into the account.
+`<public_url>/auth/callback` ([auth.py](../auth.py)). Signing in is required: every
+page except `/health` (the load balancer's health check) sends a signed-out visitor
+to sign in.
 
 Out of the box the pool has **email and password** only, with verification and
 password reset by email. Google and SES are each turned on after the steps below.

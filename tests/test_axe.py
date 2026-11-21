@@ -112,7 +112,6 @@ STATES = [
     ("details processing", "/details/process1", None, True),
     ("details done with report", "/details/done0001", None, True),
     ("details failed", "/details/error001", None, True),
-    ("details with the sign-in suggestion open", "/details/done0001", None, {"show_sign_in_prompt": True}),
     ("status signed in", "/status", None, {"email": "prof@uw.edu"}),
 ]
 

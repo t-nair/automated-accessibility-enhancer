@@ -184,7 +184,7 @@ resource "aws_ecs_express_gateway_service" "this" {
 
   cpu               = tostring(var.cpu)
   memory            = tostring(var.memory)
-  health_check_path = "/"
+  health_check_path = "/health"
 
   # so an apply (and the deploy job that runs it) fails when the new image does
   # not come up, instead of reporting success and leaving the old one running

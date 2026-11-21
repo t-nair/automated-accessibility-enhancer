@@ -68,7 +68,7 @@ Open work is tracked in [issues](https://github.com/t-nair/automated-accessibili
 ## Things to know
 
 - **Descriptions are a starting point.** The model sometimes gets names and dates wrong. Every generated description is flagged in the report so it can be checked before a file reaches students.
-- **Signing in is optional.** Without an account, your files are listed only in the browser you sent them from, tied to a signed cookie, so nobody else can open them. Signing in (email and password, or Google) keeps them in an account you can come back to from anywhere, and moves anything this browser already sent in.
+- **You sign in to use the site** (email and password, or Google), and your files are kept in your account so you can come back to them from anywhere. Running it yourself without the `COGNITO_*` settings leaves it open, with files tied to a signed cookie in each browser.
 - **"Permission denied" or "in use" errors** usually mean the deck is open in PowerPoint or a sync app is holding it. Close it and retry.
 
 ---

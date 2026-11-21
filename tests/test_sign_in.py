@@ -35,6 +35,11 @@ def cognito(monkeypatch):
     return calls
 
 
+def flashes(client):
+    with client.session_transaction() as browser_session:
+        return " ".join(message for _, message in browser_session.get("_flashes", []))
+
+
 def query_of(location):
     return dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(location).query))
 
@@ -55,11 +60,9 @@ def test_without_cognito_the_sign_in_routes_go_home(client):
     assert client.get("/auth/callback?code=x&state=y").headers["Location"].endswith("/")
 
 
-def test_without_cognito_an_upload_shows_no_prompt(client):
-    client.post("/upload", data={"presentation": make_upload("control_no_issues.pptx")},
-                content_type="multipart/form-data", follow_redirects=True)
-
-    assert b"sign-in-prompt" not in client.get("/status").data
+def test_without_cognito_the_site_is_open(client):
+    assert client.get("/").status_code == 200
+    assert client.get("/status").status_code == 200
 
 
 # --- going to Cognito ---
@@ -152,9 +155,9 @@ def test_the_code_is_exchanged_with_the_public_redirect_uri_and_the_verifier(cli
 def test_a_wrong_state_signs_nobody_in(client, cognito):
     start_sign_in(client)
 
-    response = client.get("/auth/callback?code=the-code&state=not-the-one", follow_redirects=True)
+    client.get("/auth/callback?code=the-code&state=not-the-one")
 
-    assert b"expired" in response.data
+    assert "expired" in flashes(client)
     assert cognito == []
 
     with client.session_transaction() as browser_session:
@@ -172,9 +175,9 @@ def test_a_cancelled_sign_in_leaves_the_files_where_they_were(client, cognito):
     add_submission("mine0001", owner_id=MY_OWNER_ID)
     state = start_sign_in(client)["state"]
 
-    response = client.get(f"/auth/callback?error=access_denied&state={state}", follow_redirects=True)
+    client.get(f"/auth/callback?error=access_denied&state={state}")
 
-    assert b"You were not signed in" in response.data
+    assert "You were not signed in" in flashes(client)
     assert storage_module.get_submission("mine0001")["owner_id"] == MY_OWNER_ID
 
 
@@ -185,9 +188,9 @@ def test_a_problem_talking_to_cognito_is_explained(client, cognito, monkeypatch)
     monkeypatch.setattr(auth, "user_for_code", broken)
     state = start_sign_in(client)["state"]
 
-    response = client.get(f"/auth/callback?code=the-code&state={state}", follow_redirects=True)
+    client.get(f"/auth/callback?code=the-code&state={state}")
 
-    assert b"Sign-in did not work" in response.data
+    assert "Sign-in did not work" in flashes(client)
 
 
 # --- signing out ---
@@ -213,54 +216,55 @@ def test_signing_out_forgets_the_account_and_signs_out_of_cognito(client, cognit
 
 
 def test_signing_out_needs_the_form_token(client, cognito):
+    state = start_sign_in(client)["state"]
+    client.get(f"/auth/callback?code=the-code&state={state}")
+
     response = client.post_without_token("/auth/sign-out", data={"csrf_token": "wrong"})
 
     assert response.status_code == 400
 
 
-# --- the suggestion after an upload ---
+# --- every page needs an account ---
 
-def upload_one(client):
-    return client.post("/upload", data={"presentation": make_upload("control_no_issues.pptx")},
-                       content_type="multipart/form-data", follow_redirects=True)
+@pytest.mark.parametrize("path", ["/", "/status", "/details/mine0001", "/progress/mine0001",
+                                  "/report/mine0001", "/download/mine0001"])
+def test_signed_out_visitors_are_sent_to_sign_in(client, cognito, path):
+    add_submission("mine0001", owner_id=MY_OWNER_ID)
 
+    response = client.get(path)
 
-def test_the_first_upload_suggests_an_account(client, cognito):
-    page = upload_one(client).data
-
-    assert b'id="sign-in-prompt"' in page
-    assert b"Create an account" in page
-
-
-def test_the_suggestion_is_shown_only_once(client, cognito):
-    upload_one(client)
-
-    assert b'id="sign-in-prompt"' not in upload_one(client).data
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/auth/sign-in")
 
 
-def test_someone_signed_in_is_not_asked(client, cognito):
+def test_a_signed_out_upload_is_sent_to_sign_in_and_saves_nothing(client, cognito):
+    response = client.post("/upload", data={"presentation": make_upload("control_no_issues.pptx")},
+                           content_type="multipart/form-data")
+
+    assert response.headers["Location"].endswith("/auth/sign-in")
+    assert client.queued == []
+
+
+def test_the_health_check_needs_no_account(client, cognito):
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.data == b"ok"
+
+
+def test_signed_in_visitors_can_use_the_site(client, cognito):
     state = start_sign_in(client)["state"]
     client.get(f"/auth/callback?code=the-code&state={state}")
 
     with client.session_transaction() as browser_session:
         browser_session["csrf_token"] = "token-after-sign-in"
 
-    page = client.post_without_token(
+    assert client.get("/").status_code == 200
+
+    client.post_without_token(
         "/upload", data={"csrf_token": "token-after-sign-in", "presentation": make_upload("control_no_issues.pptx")},
-        content_type="multipart/form-data", follow_redirects=True,
-    ).data
-
-    assert b'id="sign-in-prompt"' not in page
-
-
-def test_the_status_page_says_files_are_only_in_this_browser(client, cognito):
-    add_submission("mine0001", owner_id=MY_OWNER_ID)
-
-    assert b"only listed in this browser" in client.get("/status").data
-
-
-def test_uploading_never_needs_an_account(client, cognito):
-    upload_one(client)
+        content_type="multipart/form-data",
+    )
 
     assert len(client.queued) == 1
 
