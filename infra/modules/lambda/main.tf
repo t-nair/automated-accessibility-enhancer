@@ -199,5 +199,11 @@ resource "aws_s3_bucket_notification" "uploads" {
     filter_suffix       = ".ppt"
   }
 
+  lambda_function {
+    lambda_function_arn = aws_lambda_function.this.arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_suffix       = ".pdf"
+  }
+
   depends_on = [aws_lambda_permission.allow_uploads_bucket]
 }

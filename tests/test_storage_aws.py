@@ -258,3 +258,49 @@ def test_the_slide_by_slide_report_is_sent_back_with_the_deck(monkeypatch, tmp_p
     # the original is already in the uploads bucket; the details page needs the .json
     assert uploaded == ["abc12345_Lecture_alt_text", "abc12345_Lecture_alt_text.json",
                         "abc12345_Lecture_updated.pptx"]
+
+
+def test_a_pdfs_results_are_sent_back_in_their_own_folder(monkeypatch, tmp_path):
+    (tmp_path / "abc12345_Notes_alt_text").write_text("x")
+    (tmp_path / "abc12345_Notes.pdf").write_text("x")
+    pdf_folder = tmp_path / "abc12345_Notes_pdf"
+    pdf_folder.mkdir()
+
+    for name in ["abc12345_Notes.accessible.pdf", "abc12345_Notes.accessible.html",
+                 "abc12345_Notes.remediation.json", "abc12345_Notes.image-review.json"]:
+        (pdf_folder / name).write_text("x")
+
+    uploaded = []
+
+    class FakeS3:
+        def upload_file(self, path, bucket, key):
+            uploaded.append(key)
+
+    monkeypatch.setattr(lambda_handler, "s3", FakeS3())
+    lambda_handler.upload_results("abc12345_Notes.pdf", str(tmp_path))
+
+    # these are exactly the names storage_aws looks for
+    names = storage_aws.processed_names("abc12345_Notes.pdf")
+    assert sorted(uploaded) == sorted([names["report"], names["fixed"]] + names["extra"])
+
+
+def test_a_pdf_upload_goes_to_the_pdf_pipeline(monkeypatch):
+    calls = []
+
+    def fake_pdf(saved_name, input_folder, output_folder, report_folder, original_filename, progress, language):
+        calls.append((saved_name, original_filename, os.path.basename(output_folder)))
+        return True, None, None
+
+    class FakeS3:
+        def download_file(self, bucket, key, path):
+            open(path, "w").close()
+
+    monkeypatch.setattr(lambda_handler, "process_one_pdf", fake_pdf)
+    monkeypatch.setattr(lambda_handler, "process_one_file", lambda *a: pytest.fail("PowerPoint path used for a PDF"))
+    monkeypatch.setattr(lambda_handler, "s3", FakeS3())
+    monkeypatch.setattr(lambda_handler, "upload_results", lambda key, folder: None)
+    monkeypatch.setattr(lambda_handler, "write_status", lambda *a: None)
+    monkeypatch.setattr(lambda_handler, "get_table", lambda: None)
+
+    assert lambda_handler.process_one_object("uploads", "abc12345_Notes.pdf") == (True, None, None)
+    assert calls == [("abc12345_Notes.pdf", "Notes.pdf", "abc12345_Notes_pdf")]
