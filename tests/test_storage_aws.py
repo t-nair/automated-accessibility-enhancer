@@ -239,3 +239,22 @@ def test_a_failure_with_nothing_to_say_still_says_something(monkeypatch):
 
     assert written[0]["error_message"]
     assert written[0]["error_steps"]
+
+
+def test_the_slide_by_slide_report_is_sent_back_with_the_deck(monkeypatch, tmp_path):
+    for name in ["abc12345_Lecture_updated.pptx", "abc12345_Lecture_alt_text",
+                 "abc12345_Lecture_alt_text.json", "abc12345_Lecture.pptx"]:
+        (tmp_path / name).write_text("x")
+
+    uploaded = []
+
+    class FakeS3:
+        def upload_file(self, path, bucket, key):
+            uploaded.append(key)
+
+    monkeypatch.setattr(lambda_handler, "s3", FakeS3())
+    lambda_handler.upload_results("abc12345_Lecture.pptx", str(tmp_path))
+
+    # the original is already in the uploads bucket; the details page needs the .json
+    assert uploaded == ["abc12345_Lecture_alt_text", "abc12345_Lecture_alt_text.json",
+                        "abc12345_Lecture_updated.pptx"]

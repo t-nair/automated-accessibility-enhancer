@@ -206,6 +206,7 @@ def delete_submission_files(submission):
         os.path.join(PROCESSED_FOLDER, names["copy"]),
         os.path.join(PROCESSED_FOLDER, names["fixed"]),
         os.path.join(PROCESSED_FOLDER, names["report"]),
+        os.path.join(PROCESSED_FOLDER, names["report"] + ".json"),
     ]
 
     for path in paths:
