@@ -29,7 +29,7 @@
             Submitted: {{ submission.submitted_at }}<br>
             Status:
             <span class="status-badge status-{{ submission.status }}">
-                {{ submission.status }}
+                {{ submission.status|replace("_", " ") }}
             </span>
         </p>
 
@@ -44,6 +44,19 @@
                               aria-label="Processing progress"></progress>
                     <span class="progress-percent" id="progress-percent" aria-live="polite">0%</span>
                 </div>
+            </div>
+        {% endif %}
+
+        {% if submission.status == "needs_review" %}
+            <div class="review-box-notice" role="status">
+                <h3>Some image descriptions need your review</h3>
+                <p>{{ submission.error_message or "Some images in this PDF need a person to check their descriptions." }}</p>
+                <p>We never publish an image description until a person approves it.</p>
+                <p>
+                    <a href="{{ url_for('review_images', submission_id=submission.id) }}" class="download-link">
+                        Review images
+                    </a>
+                </p>
             </div>
         {% endif %}
 

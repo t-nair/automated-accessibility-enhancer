@@ -249,6 +249,11 @@ th, td {
     color: #3c763d;
 }
 
+.status-needs_review {
+    background-color: #fde8cf;
+    color: #8a4b00;
+}
+
 .visually-hidden {
     position: absolute;
     width: 1px;
@@ -684,6 +689,141 @@ nav .account {
 .link-button:focus {
     outline: 3px solid #ffbf47;
     outline-offset: 2px;
+}
+
+/* --- PDF image review --- */
+
+.review-box-notice {
+    background-color: #fdf3e6;
+    border: 1px solid #8a4b00;
+    color: #5c3200;
+    padding: 10px 15px;
+    margin: 15px 0;
+}
+
+.review-summary {
+    font-weight: bold;
+    color: #8a4b00;
+}
+
+.review-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 18px;
+    align-items: start;
+}
+
+@media (max-width: 800px) {
+    .review-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* the outlines are placed as percentages of the page, so they stay on their
+   images at any width */
+.review-page {
+    position: relative;
+    border: 1px solid #dce0e4;
+}
+
+.review-page img {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.review-box {
+    position: absolute;
+    box-sizing: border-box;
+    border: 3px solid #b35c00;
+    background-color: rgba(179, 92, 0, 0.08);
+    text-decoration: none;
+}
+
+.review-box-ok {
+    border-color: #3c763d;
+    background-color: rgba(60, 118, 61, 0.08);
+}
+
+.review-box:hover,
+.review-box-chosen {
+    background-color: rgba(28, 61, 90, 0.18);
+    border-color: #1c3d5a;
+}
+
+.review-box:focus {
+    outline: 3px solid #ffbf47;
+    outline-offset: 2px;
+}
+
+.review-box-number {
+    position: absolute;
+    top: -3px;
+    left: -3px;
+    background: #1c3d5a;
+    color: white;
+    font-size: 0.8em;
+    font-weight: bold;
+    padding: 1px 6px;
+}
+
+.review-editor {
+    border: 1px solid #dce0e4;
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin: 0 0 12px 0;
+}
+
+.review-editor legend {
+    font-weight: bold;
+    color: #1c3d5a;
+}
+
+.review-editor label {
+    display: block;
+    font-weight: bold;
+    margin-top: 10px;
+}
+
+.review-editor textarea,
+.review-editor input[type="text"],
+.review-editor select {
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    padding: 6px;
+}
+
+.review-crop {
+    display: block;
+    max-width: 100%;
+    max-height: 200px;
+    border: 1px solid #ccc;
+    margin-bottom: 8px;
+}
+
+.review-issues {
+    color: #8a4b00;
+    margin: 6px 0;
+    padding-left: 20px;
+}
+
+.review-evidence,
+.field-hint {
+    font-size: 0.9em;
+    color: #555;
+    margin: 4px 0;
+}
+
+.review-approve {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.review-approve label {
+    margin-top: 0;
 }
 
 /* --- "Report a bug" dialog --- */

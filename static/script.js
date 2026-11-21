@@ -323,6 +323,8 @@ if (slideViewer) {
     const counter = document.getElementById("slide-counter");
     const previousButton = document.getElementById("slide-prev");
     const nextButton = document.getElementById("slide-next");
+    // the PDF review steps through pages rather than slides
+    const label = slideViewer.getAttribute("data-label") || "Slide";
     let currentSlide = 0;
 
     function showSlide(index) {
@@ -330,7 +332,7 @@ if (slideViewer) {
             panels[i].hidden = (i !== index);
         }
 
-        counter.textContent = "Slide " + panels[index].getAttribute("data-slide") + " of " + panels.length;
+        counter.textContent = label + " " + panels[index].getAttribute("data-slide") + " of " + panels.length;
         previousButton.disabled = (index === 0);
         nextButton.disabled = (index === panels.length - 1);
         currentSlide = index;
@@ -354,6 +356,11 @@ if (slideViewer) {
 
         // the left and right arrow keys also move between slides
         slideViewer.addEventListener("keydown", function (event) {
+            // arrow keys move the cursor while typing a description, not the page
+            if (event.target.closest("input, textarea, select")) {
+                return;
+            }
+
             if (event.key === "ArrowLeft" && currentSlide > 0) {
                 showSlide(currentSlide - 1);
             }
@@ -366,6 +373,40 @@ if (slideViewer) {
 }
 
 
+// On the PDF review page, clicking an outlined image shows only that image's
+// description next to the page. Without JavaScript every description is shown
+// and the outlines are links that jump to them, which still works.
+const reviewPanels = document.querySelectorAll(".review-layout");
+
+for (let p = 0; p < reviewPanels.length; p++) {
+    const boxes = reviewPanels[p].querySelectorAll(".review-box");
+    const editors = reviewPanels[p].querySelectorAll(".review-editor");
+
+    const showEditor = function (editorId) {
+        for (let i = 0; i < editors.length; i++) {
+            editors[i].hidden = (editors[i].id !== editorId);
+        }
+
+        for (let i = 0; i < boxes.length; i++) {
+            const isChosen = boxes[i].getAttribute("data-editor") === editorId;
+            boxes[i].classList.toggle("review-box-chosen", isChosen);
+            boxes[i].setAttribute("aria-current", isChosen ? "true" : "false");
+        }
+    };
+
+    for (let i = 0; i < boxes.length; i++) {
+        boxes[i].addEventListener("click", function (event) {
+            event.preventDefault();
+            const editorId = boxes[i].getAttribute("data-editor");
+            showEditor(editorId);
+            document.getElementById(editorId).querySelector("textarea").focus();
+        });
+    }
+
+    if (boxes.length > 0) {
+        showEditor(boxes[0].getAttribute("data-editor"));
+    }
+}
 
 
 // the "Report a bug" dialog in the header. showModal() keeps focus inside it and

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Review image descriptions</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+{% include "_header.html" %}
+
+    <main id="main-content">
+
+        <h2>Review image descriptions</h2>
+
+        <p>
+            <strong>{{ submission.original_filename }}</strong>
+            <span class="status-badge status-{{ submission.status }}">{{ submission.status|replace("_", " ") }}</span>
+        </p>
+
+        <p>
+            Go page by page and click an outlined image to read its description. Fix anything that is wrong,
+            tick <strong>Approve</strong>, then save. We rebuild the PDF with what you approved. If an image
+            still needs something, it comes back here with a note saying what.
+        </p>
+
+        {% if issue_count %}
+            <p class="review-summary">{{ issue_count }} thing(s) to check across {{ pages|length }} page(s).</p>
+        {% endif %}
+
+        <form action="{{ url_for('submit_review', submission_id=submission.id) }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <div class="slide-viewer" id="slide-viewer" data-label="Page">
+                <div class="slide-nav" id="slide-nav" hidden>
+                    <button type="button" id="slide-prev">&larr; Previous</button>
+                    <p class="slide-counter" id="slide-counter" aria-live="polite">Page 1</p>
+                    <button type="button" id="slide-next">Next &rarr;</button>
+                </div>
+
+                {% for page in pages %}
+                    <section class="slide-panel" data-slide="{{ page.number }}">
+                        <h3 class="slide-heading">Page {{ page.number }}</h3>
+
+                        <div class="review-layout">
+                            <div class="review-page">
+                                <img src="{{ url_for('review_image', submission_id=submission.id, image_name='page-' ~ page.number ~ '.png') }}"
+                                     alt="Page {{ page.number }} of the PDF, with each image outlined">
+
+                                {% for image in page.images %}
+                                    <a href="#edit-{{ image.id }}"
+                                       class="review-box {% if image.issues %}review-box-todo{% else %}review-box-ok{% endif %}"
+                                       data-editor="edit-{{ image.id }}"
+                                       style="left: {{ image.left }}%; top: {{ image.top }}%; width: {{ image.box_width }}%; height: {{ image.box_height }}%;">
+                                        <span class="review-box-number">{{ loop.index }}</span>
+                                        <span class="visually-hidden">
+                                            Image {{ loop.index }} on page {{ page.number }}:
+                                            {% if image.issues %}needs review{% else %}approved{% endif %}
+                                        </span>
+                                    </a>
+                                {% endfor %}
+                            </div>
+
+                            <div class="review-editors">
+                                {% for image in page.images %}
+                                    <fieldset class="review-editor" id="edit-{{ image.id }}">
+                                        <legend>
+                                            Image {{ loop.index }}
+                                            {% if image.issues %}
+                                                <span class="status-badge status-needs_review">needs review</span>
+                                            {% else %}
+                                                <span class="status-badge status-done">approved</span>
+                                            {% endif %}
+                                        </legend>
+
+                                        <img class="review-crop" alt="The image being described"
+                                             src="{{ url_for('review_image', submission_id=submission.id, image_name=image.id ~ '.png') }}">
+
+                                        {% if image.issues %}
+                                            <ul class="review-issues">
+                                                {% for issue in image.issues %}
+                                                    <li>{{ issue }}</li>
+                                                {% endfor %}
+                                            </ul>
+                                        {% endif %}
+
+                                        {% if image.caption or image.extracted_text %}
+                                            <p class="review-evidence">
+                                                {% if image.caption %}<strong>Caption nearby:</strong> {{ image.caption }}<br>{% endif %}
+                                                {% if image.extracted_text %}<strong>Text found in the image:</strong> {{ image.extracted_text|join(" ") }}{% endif %}
+                                            </p>
+                                        {% endif %}
+
+                                        <label for="{{ image.id }}-classification">What the image is for</label>
+                                        <select id="{{ image.id }}-classification" name="{{ image.id }}-classification">
+                                            {% for purpose in purposes %}
+                                                <option value="{{ purpose }}" {% if purpose == image.classification %}selected{% endif %}>{{ purpose }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        <p class="field-hint">Decorative images are skipped by screen readers. Complex ones (charts, diagrams, maps) also need a long description.</p>
+
+                                        <label for="{{ image.id }}-alt_text">Alt text</label>
+                                        <textarea id="{{ image.id }}-alt_text" name="{{ image.id }}-alt_text" rows="3">{{ image.alt_text or "" }}</textarea>
+
+                                        <label for="{{ image.id }}-long_description">Long description (complex images)</label>
+                                        <textarea id="{{ image.id }}-long_description" name="{{ image.id }}-long_description" rows="4">{{ image.long_description or "" }}</textarea>
+
+                                        <details class="review-numbers" {% if image.reviewer_verified_values %}open{% endif %}>
+                                            <summary>Numbers you checked against the image</summary>
+                                            <p class="field-hint">A description may only state numbers we found in or near the image, unless you list them here and say how you checked them.</p>
+                                            <label for="{{ image.id }}-verified_values">Numbers, separated by commas</label>
+                                            <input type="text" id="{{ image.id }}-verified_values" name="{{ image.id }}-verified_values"
+                                                   value="{{ image.reviewer_verified_values|join(', ') }}">
+                                            <label for="{{ image.id }}-reviewer_notes">How you checked them</label>
+                                            <textarea id="{{ image.id }}-reviewer_notes" name="{{ image.id }}-reviewer_notes" rows="2">{{ image.reviewer_notes }}</textarea>
+                                        </details>
+
+                                        <p class="review-approve">
+                                            <input type="checkbox" id="{{ image.id }}-approved" name="{{ image.id }}-approved" value="yes"
+                                                   {% if image.approved %}checked{% endif %}>
+                                            <label for="{{ image.id }}-approved">Approve this description</label>
+                                        </p>
+                                    </fieldset>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </section>
+                {% endfor %}
+            </div>
+
+            <button type="submit">Save and rebuild the PDF</button>
+        </form>
+
+        <p><a href="{{ url_for('details', submission_id=submission.id) }}">Back to the submission</a></p>
+
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

@@ -7,6 +7,8 @@ import logging
 from datetime import datetime, timedelta
 from flask import send_from_directory
 
+import pdf_runner
+
 UPLOAD_FOLDER = "uploads"
 PROCESSED_FOLDER = "processed"
 DATA_FOLDER = "data"
@@ -305,6 +307,33 @@ def processed_file_is_ready(submission):
     folder, filename, _ = processed_file_for(submission)
 
     return os.path.exists(os.path.join(folder, filename))
+
+
+# a PDF whose images are waiting for approval keeps its review file and pictures in
+# its output folder, where the pipeline wrote them
+def read_image_review(submission):
+    saved_name = submission["saved_filename"]
+
+    return pdf_runner.read_review(pdf_output_folder(saved_name), saved_name)
+
+
+# the caller has already checked the name is one of the review's own pictures
+def send_review_image(submission, image_name):
+    saved_name = submission["saved_filename"]
+    folder = os.path.join(pdf_output_folder(saved_name), pdf_runner.images_folder_name(saved_name))
+
+    return send_from_directory(folder, image_name)
+
+
+def save_image_decisions(submission, decisions):
+    path = image_decisions_path(submission["saved_filename"])
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(decisions, f, indent=2, ensure_ascii=False)
+
+
+def image_decisions_path(saved_name):
+    return os.path.join(pdf_output_folder(saved_name), pdf_runner.decisions_file_name(saved_name))
 
 
 # the project used to keep submissions in a JSON file, so bring those across once

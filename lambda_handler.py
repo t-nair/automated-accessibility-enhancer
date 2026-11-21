@@ -21,6 +21,7 @@ import urllib.parse
 import boto3
 
 from z_reorder import process_one_file
+import pdf_runner
 from pdf_runner import process_one_pdf
 
 # z_reorder calls logging.basicConfig(filename=...) when it is imported, which
@@ -146,7 +147,7 @@ def status_key(key):
     return key + ".status.json"
 
 
-def write_status(key, was_successful, message, steps):
+def write_status(key, was_successful, message, steps, status=None):
     """Put a small JSON file next to the results saying how the deck went.
 
     The website reads this instead of guessing from which files exist, so a
@@ -154,7 +155,7 @@ def write_status(key, was_successful, message, steps):
     """
     body = json.dumps({
         "source_key": key,
-        "status": "done" if was_successful else "error",
+        "status": status or ("done" if was_successful else "error"),
         "error_message": message,
         "error_steps": steps,
     }, indent=2)
@@ -208,13 +209,23 @@ def process_one_object(bucket, key):
 
         language = read_language(submission_id)
 
+        status = None
+
         if is_pdf(filename):
             # the upload is saved as "<id>_<original name>", so drop the id for the title
             original_filename = filename.split("_", 1)[1] if submission_id else filename
+            pdf_output = os.path.join(output_folder, pdf_folder_name(filename))
             was_successful, message, steps = process_one_pdf(
-                filename, input_folder, os.path.join(output_folder, pdf_folder_name(filename)), output_folder,
+                filename, input_folder, pdf_output, output_folder,
                 original_filename, report_progress, language,
+                image_decisions=download_image_decisions(bucket, key, input_folder),
             )
+
+            # stopped for a person to approve image descriptions, so the website
+            # needs the review file and pictures to show them
+            if not was_successful and pdf_runner.review_is_pending(pdf_output, filename):
+                upload_review(key, pdf_output)
+                status = pdf_runner.NEEDS_REVIEW
         else:
             was_successful, message, steps = process_one_file(
                 filename, input_folder, output_folder, report_progress, language
@@ -223,8 +234,8 @@ def process_one_object(bucket, key):
         if was_successful:
             upload_results(key, output_folder)
 
-        write_status(key, was_successful, message, steps)
-        write_outcome(submission_id, key, was_successful, message, steps)
+        write_status(key, was_successful, message, steps, status)
+        write_outcome(submission_id, key, was_successful, message, steps, status)
 
         return was_successful, message, steps
     except Exception as e:
@@ -243,9 +254,9 @@ def process_one_object(bucket, key):
         shutil.rmtree(WORK_ROOT, ignore_errors=True)
 
 
-def write_outcome(submission_id, key, was_successful, message, steps):
+def write_outcome(submission_id, key, was_successful, message, steps, status=None):
     """Put the finished state on the row the website reads."""
-    changes = {"status": "done" if was_successful else "error"}
+    changes = {"status": status or ("done" if was_successful else "error")}
 
     if was_successful:
         name_without_extension = os.path.splitext(os.path.basename(key))[0]
@@ -255,6 +266,49 @@ def write_outcome(submission_id, key, was_successful, message, steps):
         changes["error_steps"] = steps or ["Try again from the submission page."]
 
     update_row(submission_id, changes)
+
+
+def download_image_decisions(bucket, key, input_folder):
+    """A reviewer's decisions, saved by the website next to the PDF, or None.
+
+    There are none on a first run. Without s3:ListBucket a missing object comes
+    back as access denied rather than not found, so any failure means none.
+    """
+    name = pdf_runner.decisions_file_name(os.path.basename(key))
+    prefix = os.path.dirname(key)
+    path = os.path.join(input_folder, name)
+
+    try:
+        s3.download_file(bucket, name if not prefix else prefix + "/" + name, path)
+    except Exception:
+        return None
+
+    logging.info(f"Using the reviewer's image decisions for {key}")
+    return path
+
+
+def upload_review(key, pdf_output):
+    """Copy the image review file and its pictures to where storage_aws.py reads them."""
+    filename = os.path.basename(key)
+    prefix = os.path.dirname(key)
+    folder = pdf_folder_name(filename)
+    review = pdf_runner.read_review(pdf_output, filename)
+    images = pdf_runner.images_folder_name(filename)
+
+    to_upload = [pdf_runner.review_file_name(filename)]
+    to_upload.extend(images + "/" + name for name in pdf_runner.review_image_names(review))
+
+    for produced in to_upload:
+        source = os.path.join(pdf_output, produced)
+
+        if not os.path.exists(source):
+            continue
+
+        destination = folder + "/" + produced
+        destination = destination if not prefix else prefix + "/" + destination
+        s3.upload_file(source, PROCESSED_BUCKET, destination)
+
+    logging.info(f"Uploaded the image review for {key} ({len(to_upload)} files)")
 
 
 def upload_results(key, output_folder):

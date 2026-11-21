@@ -17,4 +17,4 @@ Each deck gets an `_updated.pptx` and an `_alt_text` report. Originals are left 
 python -m pipeline.cli "input.pdf" --output-dir output/remediation
 ```
 
-This writes a tagged PDF, an HTML companion and a JSON manifest. PDFs with images stop until each description is approved in a review file, which for now only the command line can do ([pipeline/README.md](../pipeline/README.md)). On Windows, `./pipeline/setup.ps1 -Python python` sets up the environment in one step.
+This writes a tagged PDF, an HTML companion and a JSON manifest. PDFs with images stop until each description is approved in a review file ([pipeline/README.md](../pipeline/README.md)). On the website the same approval happens on the submission's review page. On Windows, `./pipeline/setup.ps1 -Python python` sets up the environment in one step.

@@ -8,6 +8,8 @@ from flask import redirect
 import boto3
 from boto3.dynamodb.conditions import Key
 
+import pdf_runner
+
 UPLOADS_BUCKET = os.environ.get("UPLOADS_BUCKET", "")
 PROCESSED_BUCKET = os.environ.get("PROCESSED_BUCKET", "")
 SUBMISSIONS_TABLE = os.environ.get("SUBMISSIONS_TABLE", "")
@@ -279,13 +281,65 @@ def processed_names(saved_name):
 
 
 def delete_submission_files(submission):
-    names = processed_names(submission["saved_filename"])
+    saved_name = submission["saved_filename"]
+    names = processed_names(saved_name)
     s3 = get_s3()
 
     delete_object(s3, UPLOADS_BUCKET, names["upload"])
+    keys = [names["copy"], names["fixed"], names["report"], names["report_data"]] + names["extra"]
 
-    for key in [names["copy"], names["fixed"], names["report"], names["report_data"]] + names["extra"]:
+    # the review's pictures are listed in the review itself, because the website
+    # is not allowed to list the bucket
+    if is_pdf(saved_name):
+        review = read_image_review(submission)
+        delete_object(s3, UPLOADS_BUCKET, pdf_runner.decisions_file_name(saved_name))
+
+        if review is not None:
+            keys.append(review_key(saved_name))
+            keys.extend(review_image_key(saved_name, name) for name in pdf_runner.review_image_names(review))
+
+    for key in keys:
         delete_object(s3, PROCESSED_BUCKET, key)
+
+
+# the Lambda uploads a stopped PDF's review next to where its results would go
+def review_key(saved_name):
+    return pdf_runner.stem_of(saved_name) + "_pdf/" + pdf_runner.review_file_name(saved_name)
+
+
+def review_image_key(saved_name, image_name):
+    return pdf_runner.stem_of(saved_name) + "_pdf/" + pdf_runner.images_folder_name(saved_name) + "/" + image_name
+
+
+def read_image_review(submission):
+    try:
+        answer = get_s3().get_object(Bucket=PROCESSED_BUCKET, Key=review_key(submission["saved_filename"]))
+        return json.loads(answer["Body"].read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+# the caller has already checked the name is one of the review's own pictures
+def send_review_image(submission, image_name):
+    link = get_s3().generate_presigned_url(
+        "get_object",
+        Params={"Bucket": PROCESSED_BUCKET, "Key": review_image_key(submission["saved_filename"], image_name)},
+        ExpiresIn=DOWNLOAD_LINK_SECONDS,
+    )
+
+    return redirect(link)
+
+
+# The decisions go in the uploads bucket, next to the PDF, because the Lambda can
+# read that bucket and the website can write to it. The bucket only starts the
+# Lambda for .pdf, .pptx and .ppt, so saving this starts nothing on its own.
+def save_image_decisions(submission, decisions):
+    get_s3().put_object(
+        Bucket=UPLOADS_BUCKET,
+        Key=pdf_runner.decisions_file_name(submission["saved_filename"]),
+        Body=json.dumps(decisions, indent=2, ensure_ascii=False).encode("utf-8"),
+        ContentType="application/json",
+    )
 
 
 def delete_object(s3, bucket, key):
