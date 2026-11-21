@@ -46,9 +46,12 @@ def cognito(monkeypatch):
             return answer
         return call
 
-    for name in ("sign_up", "confirm_sign_up", "resend_code", "forgot_password", "reset_password"):
+    for name in ("resend_code", "forgot_password", "reset_password"):
         monkeypatch.setattr(auth, name, pretend(name))
 
+    monkeypatch.setattr(auth, "sign_up", pretend("sign_up", "sign-up-session"))
+    monkeypatch.setattr(auth, "confirm_sign_up", pretend("confirm_sign_up", "sign-in-session"))
+    monkeypatch.setattr(auth, "user_for_sign_up_session", pretend("user_for_sign_up_session", dict(ACCOUNT)))
     monkeypatch.setattr(auth, "user_for_password", pretend("user_for_password", dict(ACCOUNT)))
     monkeypatch.setattr(auth, "user_for_code", pretend("user_for_code", dict(ACCOUNT)))
 
@@ -254,7 +257,7 @@ def test_a_stale_form_on_the_sign_in_page_comes_back_to_it(client, cognito):
 
 # --- creating an account ---
 
-def test_creating_an_account_then_confirming_the_email(client, cognito):
+def test_creating_an_account_then_confirming_the_email_signs_in(client, cognito):
     response = post(client, "/sign-up", email="new@uw.edu", password="Correct-horse-1")
 
     assert response.headers["Location"].endswith("/confirm-email")
@@ -266,9 +269,33 @@ def test_creating_an_account_then_confirming_the_email(client, cognito):
 
     response = post(client, "/confirm-email", email="new@uw.edu", code=" 123456 ")
 
+    # no second sign-in: the session from sign-up carries through, not the password
+    assert response.headers["Location"].endswith("/")
+    assert ("confirm_sign_up", "new@uw.edu", "123456", "sign-up-session") in cognito
+    assert ("user_for_sign_up_session", "new@uw.edu", "sign-in-session") in cognito
+    assert signed_in_email(client) == ACCOUNT["email"]
+
+    with client.session_transaction() as browser_session:
+        assert "sign_up_session" not in browser_session
+
+
+def test_confirming_with_another_email_does_not_use_the_sign_up_session(client, cognito):
+    post(client, "/sign-up", email="new@uw.edu", password="Correct-horse-1")
+
+    post(client, "/confirm-email", email="other@uw.edu", code="123456")
+
+    assert ("confirm_sign_up", "other@uw.edu", "123456", None) in cognito
+
+
+def test_confirming_later_still_works_with_a_password_sign_in(client, cognito):
+    # another browser, or the next day: no sign-up session to carry through
+    cognito.errors["user_for_sign_up_session"] = auth.SignInError("Please sign in.", "NotAuthorizedException")
+
+    response = post(client, "/confirm-email", email="new@uw.edu", code="123456")
+
     assert response.headers["Location"].endswith("/sign-in")
-    assert ("confirm_sign_up", "new@uw.edu", "123456") in cognito
-    assert signed_in_email(client) is None  # the password was not kept, so they sign in once
+    assert "Your email is confirmed" in flashes(client)
+    assert signed_in_email(client) is None
 
 
 def test_a_weak_password_shows_cognitos_rule(client, cognito):
@@ -510,6 +537,47 @@ def test_sign_up_sends_the_email_as_username_and_attribute(cognito_api):
     )
 
     auth.sign_up("new@uw.edu", "Correct-horse-1")
+
+
+def test_signing_in_after_sign_up_uses_the_session_not_a_password(cognito_api):
+    cognito_api.add_response(
+        "confirm_sign_up", {"Session": "s" * 20 + "-in"},
+        {"ClientId": "client-id", "Username": "new@uw.edu", "SecretHash": secret_hash("new@uw.edu"),
+         "ConfirmationCode": "123456", "Session": "s" * 20 + "-up"},
+    )
+    cognito_api.add_response(
+        "initiate_auth", {"AuthenticationResult": {"AccessToken": "access-token"}},
+        {"ClientId": "client-id", "AuthFlow": "USER_AUTH", "Session": "s" * 20 + "-in",
+         "AuthParameters": {"USERNAME": "new@uw.edu", "SECRET_HASH": secret_hash("new@uw.edu")}},
+    )
+    cognito_api.add_response(
+        "get_user", {"Username": "x", "UserAttributes": [{"Name": "sub", "Value": "sub-2"}]},
+        {"AccessToken": "access-token"},
+    )
+
+    session = auth.confirm_sign_up("new@uw.edu", "123456", "s" * 20 + "-up")
+
+    assert auth.user_for_sign_up_session("new@uw.edu", session) == {"sub": "sub-2", "email": "new@uw.edu"}
+
+
+def test_an_expired_sign_up_session_still_confirms_the_email(cognito_api):
+    cognito_api.add_client_error("confirm_sign_up", "NotAuthorizedException", "Invalid session for the user.")
+    cognito_api.add_response(
+        "confirm_sign_up", {},
+        {"ClientId": "client-id", "Username": "new@uw.edu", "SecretHash": secret_hash("new@uw.edu"),
+         "ConfirmationCode": "123456"},
+    )
+
+    assert auth.confirm_sign_up("new@uw.edu", "123456", "s" * 20) is None
+
+
+def test_a_wrong_code_is_not_tried_again_without_the_session(cognito_api):
+    cognito_api.add_client_error("confirm_sign_up", "CodeMismatchException")
+
+    with pytest.raises(auth.SignInError) as problem:
+        auth.confirm_sign_up("new@uw.edu", "000000", "s" * 20)
+
+    assert problem.value.code == "CodeMismatchException"
 
 
 def test_an_unexpected_error_is_not_hidden(cognito_api):

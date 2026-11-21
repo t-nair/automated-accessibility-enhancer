@@ -215,19 +215,61 @@ def user_for_password(email, password):
         raise SignInError("This account was set up with a temporary password and cannot sign in here. "
                           "Please contact us to have it reset.", answer.get("ChallengeName", ""))
 
+    return _user_for_tokens(answer, email)
+
+
+# Signs in someone who has just confirmed their email, with the session
+# ConfirmSignUp gave back instead of their password (Cognito's "sign in after
+# sign-up", the USER_AUTH flow). Only works once, within a few minutes.
+def user_for_sign_up_session(email, session):
+    answer = _ask_cognito(
+        "initiate_auth",
+        ClientId=COGNITO_CLIENT_ID,
+        AuthFlow="USER_AUTH",
+        AuthParameters={"USERNAME": email, "SECRET_HASH": _secret_hash(email)},
+        Session=session,
+    )
+
+    if "AuthenticationResult" not in answer:
+        raise SignInError("Please sign in.", answer.get("ChallengeName", ""))
+
+    return _user_for_tokens(answer, email)
+
+
+def _user_for_tokens(answer, email):
     user = _ask_cognito("get_user", AccessToken=answer["AuthenticationResult"]["AccessToken"])
     attributes = {a["Name"]: a["Value"] for a in user["UserAttributes"]}
 
     return {"sub": attributes["sub"], "email": attributes.get("email", email)}
 
 
+# gives back the session to hand to confirm_sign_up, or None
 def sign_up(email, password):
-    _ask_cognito("sign_up", **_with_client(email, Password=password,
-                                           UserAttributes=[{"Name": "email", "Value": email}]))
+    answer = _ask_cognito("sign_up", **_with_client(email, Password=password,
+                                                    UserAttributes=[{"Name": "email", "Value": email}]))
+    return answer.get("Session")
 
 
-def confirm_sign_up(email, code):
+# A wrong code or too many tries is the person's to fix, so it is shown. Anything
+# else with a session (most likely the session expired while they found the
+# email) is tried again without one: confirming matters more than skipping the
+# sign-in after. Gives back the session for user_for_sign_up_session, or None.
+NOT_THE_SESSIONS_FAULT = {"CodeMismatchException", "LimitExceededException",
+                          "TooManyRequestsException", "TooManyFailedAttemptsException"}
+
+
+def confirm_sign_up(email, code, session=None):
+    if session:
+        try:
+            return _ask_cognito("confirm_sign_up", **_with_client(email, ConfirmationCode=code, Session=session)).get("Session")
+        except SignInError as e:
+            if e.code in NOT_THE_SESSIONS_FAULT:
+                raise
+        except Exception:
+            pass
+
     _ask_cognito("confirm_sign_up", **_with_client(email, ConfirmationCode=code))
+    return None
 
 
 def resend_code(email):

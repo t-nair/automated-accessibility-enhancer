@@ -129,8 +129,10 @@ resource "aws_cognito_user_pool_client" "web" {
   supported_identity_providers         = local.identity_providers
 
   # the website's own sign-in page sends the email and password to InitiateAuth,
-  # over HTTPS, with the client secret's hash
-  explicit_auth_flows = ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]
+  # over HTTPS, with the client secret's hash (USER_PASSWORD_AUTH). USER_AUTH is
+  # only for signing someone in straight after they confirm their email, with
+  # the session ConfirmSignUp gives back (needs the Essentials tier).
+  explicit_auth_flows = ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_USER_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]
 
   prevent_user_existence_errors = "ENABLED"
   enable_token_revocation       = true

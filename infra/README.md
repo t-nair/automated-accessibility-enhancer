@@ -201,7 +201,8 @@ terraform apply -var image_tag=<tag>
 Accounts are in an Amazon Cognito user pool (`modules/cognito`, #77). Signing in,
 creating an account, confirming the email and resetting a password all happen on
 the website's own pages, which call Cognito's API with the app client's id and
-secret (`USER_PASSWORD_AUTH`, [auth.py](../auth.py)). Cognito still stores the
+secret (`USER_PASSWORD_AUTH`, [auth.py](../auth.py)); confirming the email signs
+a new account straight in with the session Cognito gives back (`USER_AUTH`). Cognito still stores the
 accounts and passwords, sends the codes and locks out repeated guesses. Google
 goes to Google and comes back at `<public_url>/auth/callback`. Signing in is
 required: every page except the account pages and `/health` (the load balancer's

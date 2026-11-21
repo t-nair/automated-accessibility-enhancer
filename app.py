@@ -761,10 +761,15 @@ def sign_up():
     email = form_email()
 
     try:
-        ask_cognito(auth.sign_up, email, request.form.get("password", ""))
+        sign_up_session = ask_cognito(auth.sign_up, email, request.form.get("password", ""))
     except auth.SignInError as e:
         flash(e.message)
         return account_page("sign_up", 400)
+
+    # lets confirming the email sign them in too, without asking for the password
+    # again. Useless to anyone else, and it expires in a few minutes.
+    if sign_up_session:
+        session["sign_up_session"] = {"email": email, "session": sign_up_session}
 
     flash(f"We sent a code to {email}. Enter it below to confirm your email.")
     return redirect(url_for("confirm_email"))
@@ -776,12 +781,22 @@ def confirm_email():
         return account_page("confirm_email")
 
     email = form_email()
+    saved = session.get("sign_up_session") or {}
+    sign_up_session = saved.get("session") if saved.get("email") == email else None
 
     try:
-        ask_cognito(auth.confirm_sign_up, email, request.form.get("code", "").strip())
+        sign_in_session = ask_cognito(auth.confirm_sign_up, email, request.form.get("code", "").strip(), sign_up_session)
     except auth.SignInError as e:
         flash(e.message)
         return account_page("confirm_email", 400)
+
+    session.pop("sign_up_session", None)
+
+    if sign_in_session:
+        try:
+            return finish_sign_in(ask_cognito(auth.user_for_sign_up_session, email, sign_in_session))
+        except auth.SignInError:
+            pass  # confirmed all the same; they sign in with their password
 
     # the password was never kept, so ask for it once more
     flash("Your email is confirmed. Sign in to start using the site.")
