@@ -680,6 +680,13 @@ def sign_in():
                                      create_account=request.args.get("create") == "1"))
 
 
+# A sign-in that did not finish stops on a page of its own. Redirecting anywhere
+# else would hit require_sign_in, go back to Cognito, and, if Cognito still has a
+# session, come straight back here: a loop with nothing to stop it.
+def sign_in_stopped(message, status):
+    return render_template("sign_in_problem.html", message=message), status
+
+
 @app.route("/auth/callback")
 def auth_callback():
     expected_state = session.pop("sign_in_state", None)
@@ -692,22 +699,19 @@ def auth_callback():
     # error instead of a code
     if request.args.get("error"):
         logging.info(f"Sign-in did not finish: {request.args.get('error')}.")
-        flash("You were not signed in. Please sign in to use the site.")
-        return redirect(url_for("status"))
+        return sign_in_stopped("You were not signed in. Please sign in to use the site.", 400)
 
     sent_state = request.args.get("state", "")
 
     if not expected_state or not verifier or not secrets.compare_digest(sent_state, expected_state):
         logging.warning("Sign-in callback rejected: the state did not match this browser's.")
-        flash("That sign-in link had expired. Please sign in again.")
-        return redirect(url_for("status"))
+        return sign_in_stopped("That sign-in link had expired. Please sign in again.", 400)
 
     try:
         user = auth.user_for_code(request.args.get("code", ""), verifier, sign_in_redirect_uri())
     except Exception as e:
         logging.error(f"Sign-in failed while talking to Cognito. Error: {e}")
-        flash("Sign-in did not work. Please try again.")
-        return redirect(url_for("status"))
+        return sign_in_stopped("Sign-in did not work. Please try again.", 502)
 
     # Only an anonymous browser's files move. If someone was already signed in here
     # (a shared computer, nobody signed out), their files stay in their account.

@@ -35,11 +35,6 @@ def cognito(monkeypatch):
     return calls
 
 
-def flashes(client):
-    with client.session_transaction() as browser_session:
-        return " ".join(message for _, message in browser_session.get("_flashes", []))
-
-
 def query_of(location):
     return dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(location).query))
 
@@ -155,9 +150,10 @@ def test_the_code_is_exchanged_with_the_public_redirect_uri_and_the_verifier(cli
 def test_a_wrong_state_signs_nobody_in(client, cognito):
     start_sign_in(client)
 
-    client.get("/auth/callback?code=the-code&state=not-the-one")
+    response = client.get("/auth/callback?code=the-code&state=not-the-one")
 
-    assert "expired" in flashes(client)
+    assert response.status_code == 400
+    assert b"expired" in response.data
     assert cognito == []
 
     with client.session_transaction() as browser_session:
@@ -175,9 +171,10 @@ def test_a_cancelled_sign_in_leaves_the_files_where_they_were(client, cognito):
     add_submission("mine0001", owner_id=MY_OWNER_ID)
     state = start_sign_in(client)["state"]
 
-    client.get(f"/auth/callback?error=access_denied&state={state}")
+    response = client.get(f"/auth/callback?error=access_denied&state={state}")
 
-    assert "You were not signed in" in flashes(client)
+    assert response.status_code == 400
+    assert b"You were not signed in" in response.data
     assert storage_module.get_submission("mine0001")["owner_id"] == MY_OWNER_ID
 
 
@@ -188,9 +185,25 @@ def test_a_problem_talking_to_cognito_is_explained(client, cognito, monkeypatch)
     monkeypatch.setattr(auth, "user_for_code", broken)
     state = start_sign_in(client)["state"]
 
-    client.get(f"/auth/callback?code=the-code&state={state}")
+    response = client.get(f"/auth/callback?code=the-code&state={state}")
 
-    assert "Sign-in did not work" in flashes(client)
+    assert response.status_code == 502
+    assert b"Sign-in did not work" in response.data
+
+
+# Kody on #149: a failed callback that redirects goes to require_sign_in, back to
+# Cognito, and (with Cognito's session still there) straight back, forever
+def test_a_failed_sign_in_stops_instead_of_going_round_again(client, cognito, monkeypatch):
+    def broken(code, verifier, redirect_uri):
+        raise OSError("connection reset")
+
+    monkeypatch.setattr(auth, "user_for_code", broken)
+    state = start_sign_in(client)["state"]
+
+    response = client.get(f"/auth/callback?code=the-code&state={state}")
+
+    assert "Location" not in response.headers
+    assert b'href="/auth/sign-in"' in response.data
 
 
 # --- signing out ---

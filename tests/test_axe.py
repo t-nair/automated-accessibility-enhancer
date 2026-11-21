@@ -113,6 +113,7 @@ STATES = [
     ("details processing", "/details/process1", None, True),
     ("details done with report", "/details/done0001", None, True),
     ("details failed", "/details/error001", None, True),
+    ("sign-in did not finish", "/auth/callback?error=access_denied", None, True),
 ]
 
 
