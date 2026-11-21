@@ -56,6 +56,9 @@ class ImageRemediation:
     reviewer_notes: str = ""
     approved: bool = False
     needs_review: bool = True
+    # the page's size in PDF points, so a reviewer's view can place `bounds` on page-<n>.png
+    page_width: float = 0.0
+    page_height: float = 0.0
     image_data: str = field(default="", repr=False)
 
     def review_dict(self) -> dict[str, Any]:
@@ -263,6 +266,8 @@ def analyze_digital_images(
                     rendered = bitmap.to_pil().convert("RGB")
                 finally:
                     bitmap.close()
+            # the whole page, for a reviewer to see each image where it sits
+            rendered.save(image_directory / f"page-{page_number}.png", "PNG")
             seen: set[tuple[int, int, int, int]] = set()
             for image_number, image in enumerate(page.images, start=1):
                 bounds = _clip_bounds(image, width, height)
@@ -314,6 +319,8 @@ def analyze_digital_images(
                         long_description=long_description,
                         accessible_data_table=None,
                         evidence=evidence,
+                        page_width=width,
+                        page_height=height,
                         image_data=base64.b64encode(image_path.read_bytes()).decode("ascii"),
                     )
                 )

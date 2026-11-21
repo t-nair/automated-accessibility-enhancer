@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, send_file
 from werkzeug.utils import secure_filename
 from z_reorder import process_one_file
+import pdf_runner
 from pdf_runner import process_one_pdf
 import auth
 
@@ -161,9 +162,12 @@ def process_one_submission(submission_id, saved_name):
     if input_folder is None:
         was_successful, error_message, error_steps = False, ORIGINAL_GONE_MESSAGE, ORIGINAL_GONE_STEPS
     elif is_pdf(saved_name):
+        pdf_output = storage.pdf_output_folder(saved_name)
+        decisions = storage.image_decisions_path(saved_name)
         was_successful, error_message, error_steps = process_one_pdf(
-            saved_name, input_folder, storage.pdf_output_folder(saved_name), storage.PROCESSED_FOLDER,
-            submission["original_filename"], update_progress, language
+            saved_name, input_folder, pdf_output, storage.PROCESSED_FOLDER,
+            submission["original_filename"], update_progress, language,
+            image_decisions=decisions if os.path.exists(decisions) else None,
         )
     else:
         was_successful, error_message, error_steps = process_one_file(
@@ -180,8 +184,15 @@ def process_one_submission(submission_id, saved_name):
     else:
         alt_text_filename = None
 
+    if was_successful:
+        new_status = "done"
+    elif is_pdf(saved_name) and pdf_runner.review_is_pending(storage.pdf_output_folder(saved_name), saved_name):
+        new_status = pdf_runner.NEEDS_REVIEW
+    else:
+        new_status = "error"
+
     storage.update_submission(submission_id, {
-        "status": "done" if was_successful else "error",
+        "status": new_status,
         "error_message": error_message,
         "error_steps": error_steps,
         "alt_text_filename": alt_text_filename,
@@ -544,6 +555,134 @@ def delete(submission_id):
     flash(f"Deleted {submission['original_filename']}.")
 
     return redirect(url_for("status"))
+
+
+# --- reviewing a PDF's image descriptions ---
+#
+# The PDF pipeline never publishes an image description a person has not
+# approved. When it stops for that, the submission is "needs_review" and these
+# pages show each page with its images, so the person can check and approve them.
+# Their decisions go back to the pipeline, which checks them again and either
+# finishes the PDF or says, per image, what is still wrong.
+
+IMAGE_PURPOSES = ("informative", "decorative", "functional", "complex")
+
+
+def get_reviewable_submission(submission_id):
+    """The submission and its image review, or (None, None) if it has nothing to review."""
+    submission = get_my_submission(submission_id)
+
+    if submission is None or submission["status"] != pdf_runner.NEEDS_REVIEW:
+        return None, None
+
+    review = storage.read_image_review(submission)
+
+    if review is None:
+        return None, None
+
+    return submission, review
+
+
+def pages_for_review(review):
+    """The review's images grouped by page, with their outlines as percentages of the page."""
+    issues_by_image = {}
+
+    # each issue starts with the image's id, e.g. "p2-i1: Human approval is required."
+    for issue in review.get("issues", []):
+        image_id, _, text = issue.partition(": ")
+        issues_by_image.setdefault(image_id, []).append(text)
+
+    pages = {}
+
+    for image in review.get("images", []):
+        width = image.get("page_width") or 1
+        height = image.get("page_height") or 1
+        bounds = image["bounds"]
+
+        pages.setdefault(image["page_number"], []).append(dict(
+            image,
+            issues=issues_by_image.get(image["id"], []),
+            left=round(100 * bounds["x0"] / width, 2),
+            top=round(100 * bounds["top"] / height, 2),
+            box_width=round(100 * (bounds["x1"] - bounds["x0"]) / width, 2),
+            box_height=round(100 * (bounds["bottom"] - bounds["top"]) / height, 2),
+        ))
+
+    return [{"number": number, "images": pages[number]} for number in sorted(pages)]
+
+
+def decisions_from_form(review, form):
+    """Turn the review form into the decisions file pipeline/images.py reads."""
+    decisions = []
+
+    for image in review.get("images", []):
+        image_id = image["id"]
+        classification = form.get(image_id + "-classification", image["classification"])
+
+        if classification not in IMAGE_PURPOSES:
+            classification = image["classification"]
+
+        # a decorative image must have empty alt text, so a screen reader skips it
+        alt_text = "" if classification == "decorative" else form.get(image_id + "-alt_text", "").strip()
+        verified = [value.strip() for value in form.get(image_id + "-verified_values", "").split(",") if value.strip()]
+
+        decisions.append({
+            "id": image_id,
+            "classification": classification,
+            "alt_text": alt_text,
+            "long_description": form.get(image_id + "-long_description", "").strip() or None,
+            "reviewer_verified_values": verified,
+            "reviewer_notes": form.get(image_id + "-reviewer_notes", "").strip(),
+            "approved": form.get(image_id + "-approved") == "yes",
+        })
+
+    return {"schemaVersion": 1, "images": decisions}
+
+
+@app.route("/review/<submission_id>")
+def review_images(submission_id):
+    submission, review = get_reviewable_submission(submission_id)
+
+    if submission is None:
+        flash("That submission has no image descriptions waiting for review.")
+        return redirect(url_for("details", submission_id=submission_id))
+
+    return render_template("review.html", submission=submission, pages=pages_for_review(review),
+                           purposes=IMAGE_PURPOSES, issue_count=len(review.get("issues", [])))
+
+
+@app.route("/review/<submission_id>/image/<image_name>")
+def review_image(submission_id, image_name):
+    submission, review = get_reviewable_submission(submission_id)
+
+    # only the pictures the review itself names, so the name can never reach another file
+    if submission is None or image_name not in pdf_runner.review_image_names(review):
+        return "Not found", 404
+
+    return storage.send_review_image(submission, image_name)
+
+
+@app.route("/review/<submission_id>", methods=["POST"])
+def submit_review(submission_id):
+    submission, review = get_reviewable_submission(submission_id)
+
+    if submission is None:
+        flash("That submission has no image descriptions waiting for review.")
+        return redirect(url_for("status"))
+
+    filename = submission["saved_filename"]
+
+    if not storage.upload_exists(filename):
+        flash("We need the original upload to rebuild the PDF. Please submit it again.")
+        return redirect(url_for("details", submission_id=submission_id))
+
+    storage.save_image_decisions(submission, decisions_from_form(review, request.form))
+    storage.update_submission(submission_id, {"status": "queued", "error_message": None, "error_steps": None})
+
+    logging.info(f"Image review submitted for submission {submission_id} ({filename}); rebuilding.")
+    restart_processing(submission_id, filename)
+
+    return redirect(url_for("details", submission_id=submission_id))
 
 
 # --- sign-in (required when Cognito is on; see auth.py) ---
