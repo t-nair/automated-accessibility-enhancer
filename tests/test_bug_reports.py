@@ -89,3 +89,27 @@ def test_reports_are_limited_per_hour(client, sent):
     for _ in range(app_module.BUG_REPORTS_PER_HOUR + 2):
         report(client)
     assert len(sent["emails"]) == app_module.BUG_REPORTS_PER_HOUR
+
+
+def test_attachments_over_the_size_limit_are_refused_before_anything_is_sent(client, sent, monkeypatch):
+    monkeypatch.setattr(bug_reports, "MAX_ATTACHMENTS_MB", 1)
+    report(client, files=[("big.pdf", b"x" * (1024 * 1024 + 1))])
+    assert sent["emails"] == []
+
+
+def test_a_report_that_failed_to_send_does_not_use_up_the_limit(client, sent, monkeypatch):
+    monkeypatch.setattr(bug_reports, "send_email", lambda message: (_ for _ in ()).throw(RuntimeError("down")))
+    for _ in range(app_module.BUG_REPORTS_PER_HOUR):
+        report(client)
+    assert app_module.recent_bug_reports.get(app_module_owner(client), []) == []
+
+
+def test_reporters_from_over_an_hour_ago_are_forgotten(client, sent):
+    app_module.recent_bug_reports["long-gone"] = [0.0]
+    report(client)
+    assert "long-gone" not in app_module.recent_bug_reports
+
+
+def app_module_owner(client):
+    with client.session_transaction() as browser_session:
+        return browser_session["owner_id"]

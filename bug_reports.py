@@ -63,7 +63,7 @@ def github_token():
 
 
 # gives back a message saying what is wrong, or None if the report can be sent.
-# attachments are (filename, bytes) pairs.
+# attachments are (filename, size in bytes) pairs, so this runs before any file is read.
 def problem_with(subject, description, attachments):
     if not subject:
         return "Add a one-line summary of the problem."
@@ -81,7 +81,7 @@ def problem_with(subject, description, attachments):
         if not filename.lower().endswith(ALLOWED_EXTENSIONS):
             return f"{filename}: only images (.png, .jpg, .gif, .webp), .pptx, .ppt and .pdf files can be attached."
 
-    if sum(len(data) for _, data in attachments) > MAX_ATTACHMENTS_MB * 1024 * 1024:
+    if sum(size for _, size in attachments) > MAX_ATTACHMENTS_MB * 1024 * 1024:
         return f"The attachments add up to more than {MAX_ATTACHMENTS_MB} MB. Leave out the largest file and mention it in the details."
 
     return None

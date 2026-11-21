@@ -132,11 +132,16 @@ def get_my_submission(submission_id):
     return submission
 
 
-def file_is_too_big(file):
+def upload_size(file):
     # move to the end of the file to check its size, then move back
     file.seek(0, os.SEEK_END)
-    size_mb = file.tell() / (1024 * 1024)
+    size = file.tell()
     file.seek(0)
+    return size
+
+
+def file_is_too_big(file):
+    size_mb = upload_size(file) / (1024 * 1024)
 
     return size_mb > MAX_FILE_SIZE_MB
 
@@ -551,9 +556,37 @@ def delete(submission_id):
 
 BUG_REPORTS_PER_HOUR = 5
 
-# when each person last sent reports, so one account cannot flood the inbox or the issue list.
+# when each person sent reports in the last hour, so one account cannot flood the inbox or
+# the issue list. The lock makes checking and taking a slot one step, so two reports sent
+# at once cannot both slip under the limit.
 # ponytail: per process, so each ECS task counts separately; move to DynamoDB if that is ever abused.
 recent_bug_reports = {}
+bug_report_lock = threading.Lock()
+
+
+# takes one of this person's slots for the hour, or gives back None if they have none left
+def take_bug_report_slot(owner):
+    now = time.time()
+
+    with bug_report_lock:
+        # forget everyone whose reports are all over an hour old, so this only ever holds the last hour
+        for stale in [key for key, times in recent_bug_reports.items() if max(times, default=0) <= now - 3600]:
+            del recent_bug_reports[stale]
+
+        recent = [sent for sent in recent_bug_reports.get(owner, []) if sent > now - 3600]
+        if len(recent) >= BUG_REPORTS_PER_HOUR:
+            return None
+
+        recent_bug_reports[owner] = recent + [now]
+        return now
+
+
+# a report that was never sent does not count against the limit
+def give_back_bug_report_slot(owner, slot):
+    with bug_report_lock:
+        times = recent_bug_reports.get(owner, [])
+        if slot in times:
+            times.remove(slot)
 
 
 @app.route("/report-bug", methods=["POST"])
@@ -564,34 +597,34 @@ def report_bug():
         return_to = "/"
     back = redirect(request.script_root + return_to)
 
-    owner = get_owner_id()
-    hour_ago = time.time() - 60 * 60
-    recent = [sent for sent in recent_bug_reports.get(owner, []) if sent > hour_ago]
-
-    if len(recent) >= BUG_REPORTS_PER_HOUR:
-        flash("You have sent several bug reports in the last hour. Please wait a while, or email hello@accessibilityenhancer.com.")
-        return back
-
     subject = request.form.get("subject", "").strip()
     description = request.form.get("description", "").strip()
-    attachments = [(secure_filename(f.filename) or "attachment", f.read())
-                   for f in request.files.getlist("attachments") if f.filename]
+    files = [f for f in request.files.getlist("attachments") if f.filename]
+    names = [secure_filename(f.filename) or "attachment" for f in files]
 
-    problem = bug_reports.problem_with(subject, description, attachments)
+    # checked from the sizes alone, so nothing too big is ever read into memory
+    problem = bug_reports.problem_with(subject, description, [(name, upload_size(f)) for name, f in zip(names, files)])
     if problem:
         flash(f"The bug report was not sent. {problem}")
         return back
 
+    owner = get_owner_id()
+    slot = take_bug_report_slot(owner)
+    if slot is None:
+        flash("You have sent several bug reports in the last hour. Please wait a while, or email hello@accessibilityenhancer.com.")
+        return back
+
+    attachments = [(name, f.read()) for name, f in zip(names, files)]
     facts = {"Page": return_to, "Browser": request.headers.get("User-Agent", "unknown")[:200]}
 
     try:
         bug_id = bug_reports.send(session.get("email"), subject, description, attachments, facts)
     except Exception as e:
+        give_back_bug_report_slot(owner, slot)
         logging.error(f"A bug report could not be emailed. Error: {e}")
         flash("Sorry, the bug report could not be sent. Please email it to hello@accessibilityenhancer.com instead.")
         return back
 
-    recent_bug_reports[owner] = recent + [time.time()]
     flash(f"Thanks, your bug report was sent. Its reference is {bug_id}.")
     return back
 
