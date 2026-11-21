@@ -181,6 +181,7 @@ module "website" {
     client_id                    = module.auth.client_id
     client_secret_parameter_name = module.auth.client_secret_parameter_name
     client_secret_parameter_arn  = module.auth.client_secret_parameter_arn
+    google_enabled               = module.auth.google_enabled
   }
 
   cpu                = var.web_cpu

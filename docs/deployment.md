@@ -24,7 +24,7 @@ The diagram follows a deck from upload to download.
 | Host | AWS, `us-east-1`: the website on ECS Express Mode, decks processed by Lambda, files in S3, submissions in DynamoDB ([infra/](../infra/README.md)) |
 | Image descriptions | Claude on Amazon Bedrock, in the same AWS account. Local Qwen2-VL is no longer used (#97) |
 | Certificates | Cloudflare issues and renews the one for `accessibilityenhancer.com`. ECS Express Mode issues and renews the one for its own `*.ecs.us-east-1.on.aws` address. Nobody renews anything by hand |
-| Sign-in | Required, with Amazon Cognito ([infra/README.md](../infra/README.md#sign-in)): email and password, or Google; Microsoft and NetID later. Every page except `/health` sends a signed-out visitor to sign in |
+| Sign-in | Required, on the site's own pages, with Amazon Cognito behind them ([infra/README.md](../infra/README.md#sign-in)): email and password, or Google; Microsoft and NetID later. Every page except the account pages and `/health` sends a signed-out visitor to sign in |
 | Who can use it | Anyone with an account. Sign-up is not limited to certain email domains for now |
 | Deploys | Every merge to `main`, from CI, after a reviewer approves the `production` environment |
 | Owner | @t-nair owns the AWS account, approves production deploys, and watches the bill and the alarms |
@@ -109,6 +109,7 @@ python3.12 -m venv .venv
 | `MIN_FONT_PT` | No | Font size below which text is reported (default `9`) |
 | `PDF_PIPELINE_CHROME` | Only if Chrome is not on `PATH` | Path to Chrome, Chromium or Edge for PDF export |
 | `COGNITO_DOMAIN`, `COGNITO_CLIENT_ID`, `COGNITO_CLIENT_SECRET` | No | Turn on required sign-in against a Cognito user pool. On AWS, Terraform sets these (with `COGNITO_CLIENT_SECRET_PARAMETER` in place of the secret). Without them there are no accounts and the site is open |
+| `COGNITO_GOOGLE` | No | `true` shows *Continue with Google* on the sign-in page. Terraform sets it once a Google client is configured |
 | `PUBLIC_URL` | With sign-in | The address people reach the site at, without a trailing slash. Sign-in redirects are built from it, and the session cookie is marked Secure when it starts with `https://` |
 | `HOST`, `PORT` | No | Address to listen on (default `127.0.0.1:5000`). Keep `127.0.0.1` behind a proxy on the same machine |
 

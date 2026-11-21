@@ -42,3 +42,8 @@ output "email_dkim_records" {
     }
   ]
 }
+
+# so the website shows "Continue with Google" only when it would work
+output "google_enabled" {
+  value = local.google_enabled
+}

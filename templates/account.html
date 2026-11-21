@@ -1,0 +1,136 @@
+{# Every page for getting into an account: sign in, create one, confirm the email,
+   and reset a forgotten password. app.py picks which with `form`. #}
+{% set titles = {
+    "sign_in": "Sign In",
+    "sign_up": "Create an Account",
+    "confirm_email": "Confirm Your Email",
+    "forgot_password": "Reset Your Password",
+    "reset_password": "Choose a New Password",
+} %}
+{% set password_rules = "At least 8 characters, with an uppercase letter, a lowercase letter, a number and a symbol." %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ titles[form] }} - Accessibility Enhancer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
+{% include "_header.html" %}
+
+    <main id="main-content" class="account">
+
+        <h2>{{ titles[form] }}</h2>
+
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash-message" role="alert" aria-live="assertive">
+                    {% for message in messages %}
+                        <p>{{ message }}</p>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        {% if form == "sign_in" %}
+            <p>Sign in to fix your presentations and PDFs, and to come back to them later.</p>
+
+            <form method="POST" action="{{ url_for('sign_in') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" value="{{ email }}" autocomplete="username" required>
+
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" autocomplete="current-password" required>
+
+                <button type="submit">Sign In</button>
+            </form>
+
+            <p><a href="{{ url_for('forgot_password') }}">Forgot your password?</a></p>
+            <p>New here? <a href="{{ url_for('sign_up') }}">Create an account</a></p>
+
+        {% elif form == "sign_up" %}
+            <form method="POST" action="{{ url_for('sign_up') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" value="{{ email }}" autocomplete="username" required>
+
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" autocomplete="new-password" minlength="8"
+                       aria-describedby="password-help" required>
+                <p class="help-text" id="password-help">{{ password_rules }}</p>
+
+                <button type="submit">Create Account</button>
+            </form>
+
+            <p>Already have an account? <a href="{{ url_for('sign_in') }}">Sign in</a></p>
+
+        {% elif form == "confirm_email" %}
+            <form method="POST" action="{{ url_for('confirm_email') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" value="{{ email }}" autocomplete="username" required>
+
+                <label for="code">Code from the email</label>
+                <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required>
+
+                <button type="submit">Confirm Email</button>
+            </form>
+
+            <form method="POST" action="{{ url_for('resend_code') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="email" value="{{ email }}">
+                <p>No email? Check your spam folder, or <button type="submit" class="link-button inline">send a new code</button>.</p>
+            </form>
+
+        {% elif form == "forgot_password" %}
+            <p>Enter the email you signed up with and we will send you a code to choose a new password.</p>
+
+            <form method="POST" action="{{ url_for('forgot_password') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" value="{{ email }}" autocomplete="username" required>
+
+                <button type="submit">Send Code</button>
+            </form>
+
+            <p><a href="{{ url_for('sign_in') }}">Back to sign in</a></p>
+
+        {% elif form == "reset_password" %}
+            <form method="POST" action="{{ url_for('reset_password') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" value="{{ email }}" autocomplete="username" required>
+
+                <label for="code">Code from the email</label>
+                <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required>
+
+                <label for="password">New password</label>
+                <input type="password" id="password" name="password" autocomplete="new-password" minlength="8"
+                       aria-describedby="password-help" required>
+                <p class="help-text" id="password-help">{{ password_rules }}</p>
+
+                <button type="submit">Change Password</button>
+            </form>
+
+            <p><a href="{{ url_for('forgot_password') }}">Send a new code</a></p>
+        {% endif %}
+
+        {% if google_available and form in ("sign_in", "sign_up") %}
+            <p class="account-or">or</p>
+            <a class="button-link secondary" href="{{ url_for('google_sign_in') }}">Continue with Google</a>
+        {% endif %}
+
+    </main>
+
+</body>
+</html>

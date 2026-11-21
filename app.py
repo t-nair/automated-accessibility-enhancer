@@ -411,8 +411,12 @@ def sign_in_details():
     }
 
 
-# pages anyone can reach: the sign-in round trip itself, styles, and the health check
-OPEN_ENDPOINTS = {"sign_in", "auth_callback", "static", "health"}
+# the pages for signing in, creating an account and resetting a password
+ACCOUNT_ENDPOINTS = {"sign_in", "sign_up", "confirm_email", "resend_code", "forgot_password",
+                     "reset_password", "google_sign_in", "auth_callback"}
+
+# pages anyone can reach: those, styles, and the health check
+OPEN_ENDPOINTS = ACCOUNT_ENDPOINTS | {"static", "health"}
 
 
 # With Cognito on, every page needs an account. Runs before the CSRF check, so
@@ -444,6 +448,10 @@ def check_csrf_token():
 
     logging.warning(f"POST to {request.path} rejected: the form's security token was missing or wrong.")
     flash("That form had expired, so nothing was changed. Please try again.")
+
+    if auth.ENABLED and not session.get("email"):
+        return redirect(url_for("sign_in"))
+
     return render_template("index.html", max_file_size_mb=MAX_FILE_SIZE_MB, languages=LANGUAGES), 400
 
 
@@ -659,60 +667,35 @@ def delete(submission_id):
 
 
 # --- sign-in (required when Cognito is on; see auth.py) ---
+#
+# Email and password are on our own pages (templates/account.html), checked by
+# Cognito's API. Google goes to Google and comes back to /auth/callback.
 
-def sign_in_redirect_uri():
-    if auth.PUBLIC_URL:
-        return auth.PUBLIC_URL + "/auth/callback"
-
-    return url_for("auth_callback", _external=True)
-
-
-@app.route("/auth/sign-in")
-def sign_in():
-    if not auth.ENABLED:
-        return redirect(url_for("home"))
-
-    state, verifier = auth.new_state_and_verifier()
-    session["sign_in_state"] = state
-    session["sign_in_verifier"] = verifier
-
-    return redirect(auth.sign_in_url(sign_in_redirect_uri(), state, verifier,
-                                     create_account=request.args.get("create") == "1"))
+def account_page(form, status=200):
+    return render_template("account.html", form=form, email=session.get("account_email", ""),
+                           google_available=auth.GOOGLE_ENABLED), status
 
 
-# A sign-in that did not finish stops on a page of its own. Redirecting anywhere
-# else would hit require_sign_in, go back to Cognito, and, if Cognito still has a
-# session, come straight back here: a loop with nothing to stop it.
-def sign_in_stopped(message, status):
-    return render_template("sign_in_problem.html", message=message), status
+def form_email():
+    email = request.form.get("email", "").strip()
+    session["account_email"] = email
+    return email
 
 
-@app.route("/auth/callback")
-def auth_callback():
-    expected_state = session.pop("sign_in_state", None)
-    verifier = session.pop("sign_in_verifier", None)
-
-    if not auth.ENABLED:
-        return redirect(url_for("home"))
-
-    # someone who closes the sign-in page or presses cancel comes back with an
-    # error instead of a code
-    if request.args.get("error"):
-        logging.info(f"Sign-in did not finish: {request.args.get('error')}.")
-        return sign_in_stopped("You were not signed in. Please sign in to use the site.", 400)
-
-    sent_state = request.args.get("state", "")
-
-    if not expected_state or not verifier or not secrets.compare_digest(sent_state, expected_state):
-        logging.warning("Sign-in callback rejected: the state did not match this browser's.")
-        return sign_in_stopped("That sign-in link had expired. Please sign in again.", 400)
-
+# Runs one of auth's Cognito calls. SignInError comes back for the page to show;
+# anything else (Cognito down, Parameter Store unreadable) is logged and becomes a
+# SignInError too, so no page has to know the difference.
+def ask_cognito(action, *args):
     try:
-        user = auth.user_for_code(request.args.get("code", ""), verifier, sign_in_redirect_uri())
+        return action(*args)
+    except auth.SignInError:
+        raise
     except Exception as e:
         logging.error(f"Sign-in failed while talking to Cognito. Error: {e}")
-        return sign_in_stopped("Sign-in did not work. Please try again.", 502)
+        raise auth.SignInError("The sign-in service did not answer. Please try again in a moment.")
 
+
+def finish_sign_in(user, with_google=False):
     # Only an anonymous browser's files move. If someone was already signed in here
     # (a shared computer, nobody signed out), their files stay in their account.
     browser_owner = None if session.get("email") else session.get("owner_id")
@@ -721,27 +704,212 @@ def auth_callback():
     session.clear()
     session["owner_id"] = user["sub"]
     session["email"] = user["email"]
+    session["with_google"] = with_google
     session.permanent = True
 
     if browser_owner and browser_owner != user["sub"]:
         storage.move_submissions(browser_owner, user["sub"])
 
     logging.info(f"Signed in: account {user['sub']}.")
-    flash(f"Signed in as {user['email']}. Files you sent in from this browser are now in your account.")
+    flash(f"Signed in as {user['email']}.")
 
-    return redirect(url_for("status"))
+    return redirect(url_for("home"))
+
+
+# the account pages make no sense once signed in, or with no accounts at all
+@app.before_request
+def skip_account_pages():
+    if request.endpoint in ACCOUNT_ENDPOINTS and (not auth.ENABLED or session.get("email")):
+        return redirect(url_for("home"))
+
+    return None
+
+
+@app.route("/sign-in", methods=["GET", "POST"])
+def sign_in():
+    if request.method == "GET":
+        return account_page("sign_in")
+
+    email = form_email()
+
+    try:
+        user = ask_cognito(auth.user_for_password, email, request.form.get("password", ""))
+    except auth.SignInError as e:
+        flash(e.message)
+
+        if e.code == "UserNotConfirmedException":
+            try:
+                ask_cognito(auth.resend_code, email)
+            except auth.SignInError as resend_problem:
+                flash(resend_problem.message)
+
+            return redirect(url_for("confirm_email"))
+
+        if e.code == "PasswordResetRequiredException":
+            return redirect(url_for("forgot_password"))
+
+        return account_page("sign_in", 400)
+
+    return finish_sign_in(user)
+
+
+@app.route("/sign-up", methods=["GET", "POST"])
+def sign_up():
+    if request.method == "GET":
+        return account_page("sign_up")
+
+    email = form_email()
+
+    try:
+        sign_up_session = ask_cognito(auth.sign_up, email, request.form.get("password", ""))
+    except auth.SignInError as e:
+        flash(e.message)
+        return account_page("sign_up", 400)
+
+    # lets confirming the email sign them in too, without asking for the password
+    # again. Useless to anyone else, and it expires in a few minutes.
+    if sign_up_session:
+        session["sign_up_session"] = {"email": email, "session": sign_up_session}
+
+    flash(f"We sent a code to {email}. Enter it below to confirm your email.")
+    return redirect(url_for("confirm_email"))
+
+
+@app.route("/confirm-email", methods=["GET", "POST"])
+def confirm_email():
+    if request.method == "GET":
+        return account_page("confirm_email")
+
+    email = form_email()
+    saved = session.get("sign_up_session") or {}
+    sign_up_session = saved.get("session") if saved.get("email") == email else None
+
+    try:
+        sign_in_session = ask_cognito(auth.confirm_sign_up, email, request.form.get("code", "").strip(), sign_up_session)
+    except auth.SignInError as e:
+        flash(e.message)
+        return account_page("confirm_email", 400)
+
+    session.pop("sign_up_session", None)
+
+    if sign_in_session:
+        try:
+            return finish_sign_in(ask_cognito(auth.user_for_sign_up_session, email, sign_in_session))
+        except auth.SignInError:
+            pass  # confirmed all the same; they sign in with their password
+
+    # the password was never kept, so ask for it once more
+    flash("Your email is confirmed. Sign in to start using the site.")
+    return redirect(url_for("sign_in"))
+
+
+@app.route("/confirm-email/resend", methods=["POST"])
+def resend_code():
+    email = form_email()
+
+    try:
+        ask_cognito(auth.resend_code, email)
+        flash(f"We sent a new code to {email}.")
+    except auth.SignInError as e:
+        flash(e.message)
+
+    return redirect(url_for("confirm_email"))
+
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if request.method == "GET":
+        return account_page("forgot_password")
+
+    email = form_email()
+
+    try:
+        ask_cognito(auth.forgot_password, email)
+    except auth.SignInError as e:
+        flash(e.message)
+        return account_page("forgot_password", 400)
+
+    flash(f"If there is an account for {email}, we sent it a code. Enter it below with a new password.")
+    return redirect(url_for("reset_password"))
+
+
+@app.route("/reset-password", methods=["GET", "POST"])
+def reset_password():
+    if request.method == "GET":
+        return account_page("reset_password")
+
+    email = form_email()
+
+    try:
+        ask_cognito(auth.reset_password, email, request.form.get("code", "").strip(), request.form.get("password", ""))
+    except auth.SignInError as e:
+        flash(e.message)
+        return account_page("reset_password", 400)
+
+    flash("Your password is changed. Sign in with the new one.")
+    return redirect(url_for("sign_in"))
+
+
+def sign_in_redirect_uri():
+    if auth.PUBLIC_URL:
+        return auth.PUBLIC_URL + "/auth/callback"
+
+    return url_for("auth_callback", _external=True)
+
+
+@app.route("/auth/google")
+def google_sign_in():
+    if not auth.GOOGLE_ENABLED:
+        return redirect(url_for("sign_in"))
+
+    state, verifier = auth.new_state_and_verifier()
+    session["sign_in_state"] = state
+    session["sign_in_verifier"] = verifier
+
+    return redirect(auth.google_sign_in_url(sign_in_redirect_uri(), state, verifier))
+
+
+@app.route("/auth/callback")
+def auth_callback():
+    expected_state = session.pop("sign_in_state", None)
+    verifier = session.pop("sign_in_verifier", None)
+
+    # someone who cancels at Google comes back with an error instead of a code
+    if request.args.get("error"):
+        logging.info(f"Sign-in did not finish: {request.args.get('error')}.")
+        flash("You were not signed in. Please sign in to use the site.")
+        return redirect(url_for("sign_in"))
+
+    sent_state = request.args.get("state", "")
+
+    if not expected_state or not verifier or not secrets.compare_digest(sent_state, expected_state):
+        logging.warning("Sign-in callback rejected: the state did not match this browser's.")
+        flash("That sign-in link had expired. Please sign in again.")
+        return redirect(url_for("sign_in"))
+
+    try:
+        user = auth.user_for_code(request.args.get("code", ""), verifier, sign_in_redirect_uri())
+    except Exception as e:
+        logging.error(f"Sign-in failed while talking to Cognito. Error: {e}")
+        flash("Sign-in did not work. Please try again.")
+        return redirect(url_for("sign_in"))
+
+    return finish_sign_in(user, with_google=True)
 
 
 @app.route("/auth/sign-out", methods=["POST"])
 def sign_out():
+    with_google = session.get("with_google")
     session.clear()
 
-    if not auth.ENABLED:
-        return redirect(url_for("home"))
+    # Signing in with Google leaves a session at Cognito's domain too, which would
+    # sign the next person at this browser straight back in. End it, and Cognito
+    # sends the person back here. Password sign-ins leave nothing there.
+    if auth.ENABLED and with_google:
+        home_url = (auth.PUBLIC_URL + "/") if auth.PUBLIC_URL else url_for("home", _external=True)
+        return redirect(auth.sign_out_url(home_url))
 
-    # Cognito ends its own session too, then sends the person back to the home page
-    home_url = (auth.PUBLIC_URL + "/") if auth.PUBLIC_URL else url_for("home", _external=True)
-    return redirect(auth.sign_out_url(home_url))
+    return redirect(url_for("home"))
 
 
 @app.route("/report/<submission_id>")

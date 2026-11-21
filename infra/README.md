@@ -19,7 +19,7 @@ and on AWS it keeps them in DynamoDB and leaves the work to the Lambda.
 | `modules/ecr` | The registries the two container images are pushed to, one each for the pipeline and the website. |
 | `modules/dynamodb` | The table of submissions, which replaces the sqlite file the local version uses. |
 | `modules/ecs_web` | The website itself on ECS Express Mode, which brings its own load balancer and HTTPS certificate, and the permissions it runs with. |
-| `modules/cognito` | Sign-in: a Cognito user pool, its sign-in pages, the website's app client, Google when configured, and SES for email. See *Sign-in* below. |
+| `modules/cognito` | Sign-in: a Cognito user pool, its OAuth domain (for Google), the website's app client, Google when configured, and SES for email. See *Sign-in* below. |
 | `modules/lambda` | The function, its execution role, and the S3 trigger. |
 | `modules/observability` | Log group with a retention period, an SNS topic, and four alarms. |
 | `modules/github_oidc` | Two roles GitHub Actions assumes without an access key: one to run `terraform plan` on pull requests, one to deploy from `main`. |
@@ -198,11 +198,15 @@ terraform apply -var image_tag=<tag>
 
 ## Sign-in
 
-Accounts are in an Amazon Cognito user pool (`modules/cognito`, #77). The website
-sends people to Cognito's sign-in pages and gets them back at
-`<public_url>/auth/callback` ([auth.py](../auth.py)). Signing in is required: every
-page except `/health` (the load balancer's health check) sends a signed-out visitor
-to sign in.
+Accounts are in an Amazon Cognito user pool (`modules/cognito`, #77). Signing in,
+creating an account, confirming the email and resetting a password all happen on
+the website's own pages, which call Cognito's API with the app client's id and
+secret (`USER_PASSWORD_AUTH`, [auth.py](../auth.py)); confirming the email signs
+a new account straight in with the session Cognito gives back (`USER_AUTH`). Cognito still stores the
+accounts and passwords, sends the codes and locks out repeated guesses. Google
+goes to Google and comes back at `<public_url>/auth/callback`. Signing in is
+required: every page except the account pages and `/health` (the load balancer's
+health check) sends a signed-out visitor to sign in.
 
 Out of the box the pool has **email and password** only, with verification and
 password reset by email. Google and SES are each turned on after the steps below.
@@ -266,11 +270,14 @@ takes two applies and a request to AWS:
 
 ### Trying sign-in locally
 
-Set `cognito_extra_callback_urls = ["http://localhost:5000/auth/callback"]` and
-`cognito_extra_logout_urls = ["http://localhost:5000/"]` and apply; Cognito allows
-http only for localhost. Then start the app with `COGNITO_DOMAIN`
-(`terraform output cognito_sign_in_domain`), `COGNITO_CLIENT_ID` and
-`COGNITO_CLIENT_SECRET` set, and leave `PUBLIC_URL` unset so the redirect is built
+Start the app with `COGNITO_DOMAIN` (`terraform output cognito_sign_in_domain`),
+`COGNITO_CLIENT_ID` and `COGNITO_CLIENT_SECRET` set. Email and password work with
+just those; the calls need no AWS credentials.
+
+For Google too, set `COGNITO_GOOGLE=true`, add
+`cognito_extra_callback_urls = ["http://localhost:5000/auth/callback"]` and
+`cognito_extra_logout_urls = ["http://localhost:5000/"]` and apply (Cognito allows
+http only for localhost), and leave `PUBLIC_URL` unset so the redirect is built
 from `localhost`.
 
 ---

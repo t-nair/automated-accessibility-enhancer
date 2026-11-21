@@ -51,10 +51,10 @@ def base_url(tmp_path_factory):
     patch.setattr(storage_module, "DATABASE_FILE", str(folder / "submissions.db"))
     patch.setattr(app_module, "start_processing", lambda submission_id, saved_name: None)
 
-    # sign-in on, so the header's account links are audited too. Every visitor below
-    # is signed in, since the site sends anyone else to sign in. Nothing here ever
-    # goes to Cognito.
+    # sign-in on, with Google, so the header's account links and the sign-in pages
+    # are audited too. Nothing here ever goes to Cognito.
     patch.setattr(auth, "ENABLED", True)
+    patch.setattr(auth, "GOOGLE_ENABLED", True)
     storage_module.setup()
 
     (folder / "done_report.txt").write_text("Slide 1: added a description to 1 picture.\n", encoding="utf-8")
@@ -100,6 +100,18 @@ def submit_with_stale_token(page):
     }""")
 
 
+SIGNED_OUT = "signed out"
+
+
+# a stale token brings the sign-in page back with a message, without asking Cognito
+def sign_in_with_a_bad_form(page):
+    page.evaluate("""() => {
+        const form = document.querySelector('form');
+        form.querySelector('[name=csrf_token]').value = 'stale';
+        form.submit();
+    }""")
+
+
 # every page and state in docs/accessibility-audit.md. The delete confirmation is the
 # browser's own dialog, so there is no page content for axe to check.
 STATES = [
@@ -113,7 +125,12 @@ STATES = [
     ("details processing", "/details/process1", None, True),
     ("details done with report", "/details/done0001", None, True),
     ("details failed", "/details/error001", None, True),
-    ("sign-in did not finish", "/auth/callback?error=access_denied", None, True),
+    ("sign in", "/sign-in", None, SIGNED_OUT),
+    ("sign in with a wrong password", "/sign-in", sign_in_with_a_bad_form, SIGNED_OUT),
+    ("create an account", "/sign-up", None, SIGNED_OUT),
+    ("confirm email", "/confirm-email", None, SIGNED_OUT),
+    ("forgot password", "/forgot-password", None, SIGNED_OUT),
+    ("reset password", "/reset-password", None, SIGNED_OUT),
 ]
 
 
@@ -122,11 +139,12 @@ def test_page_has_no_axe_violations(base_url, browser, axe_source, path, action,
     # a zero-width viewport hides colours from axe, so always set a real one
     context = browser.new_context(viewport={"width": 1280, "height": 900})
 
-    # every visitor is signed in; True is the one who owns the submissions
-    owner_id = OWNER_ID if as_owner else "someone-with-no-files"
-    cookie = app_module.app.session_interface.get_signing_serializer(app_module.app).dumps(
-        {"owner_id": owner_id, "email": "prof@uw.edu"})
-    context.add_cookies([{"name": app_module.app.config["SESSION_COOKIE_NAME"], "value": cookie, "url": base_url}])
+    # visitors are signed in unless SIGNED_OUT; True is the one who owns the submissions
+    if as_owner != SIGNED_OUT:
+        owner_id = OWNER_ID if as_owner else "someone-with-no-files"
+        cookie = app_module.app.session_interface.get_signing_serializer(app_module.app).dumps(
+            {"owner_id": owner_id, "email": "prof@uw.edu"})
+        context.add_cookies([{"name": app_module.app.config["SESSION_COOKIE_NAME"], "value": cookie, "url": base_url}])
 
     page = context.new_page()
     page.goto(base_url + path)
