@@ -13,6 +13,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, jso
 from werkzeug.utils import secure_filename
 from z_reorder import process_one_file, severity_summary
 import auth
+import bug_reports
 
 # Where submissions and their files are kept. On AWS that is S3 and DynamoDB, and
 # the pipeline runs in Lambda; on a laptop it is folders and a sqlite file, and the
@@ -664,6 +665,55 @@ def delete(submission_id):
     flash(f"Deleted {submission['original_filename']}.")
 
     return redirect(url_for("status"))
+
+
+# --- "Report a bug" (see bug_reports.py) ---
+
+BUG_REPORTS_PER_HOUR = 5
+
+# when each person last sent reports, so one account cannot flood the inbox or the issue list.
+# ponytail: per process, so each ECS task counts separately; move to DynamoDB if that is ever abused.
+recent_bug_reports = {}
+
+
+@app.route("/report-bug", methods=["POST"])
+def report_bug():
+    # back to the page the dialog was opened on; only a path on this site, never another address
+    return_to = request.form.get("return_to", "/")
+    if not return_to.startswith("/") or return_to.startswith("//"):
+        return_to = "/"
+    back = redirect(request.script_root + return_to)
+
+    owner = get_owner_id()
+    hour_ago = time.time() - 60 * 60
+    recent = [sent for sent in recent_bug_reports.get(owner, []) if sent > hour_ago]
+
+    if len(recent) >= BUG_REPORTS_PER_HOUR:
+        flash("You have sent several bug reports in the last hour. Please wait a while, or email hello@accessibilityenhancer.com.")
+        return back
+
+    subject = request.form.get("subject", "").strip()
+    description = request.form.get("description", "").strip()
+    attachments = [(secure_filename(f.filename) or "attachment", f.read())
+                   for f in request.files.getlist("attachments") if f.filename]
+
+    problem = bug_reports.problem_with(subject, description, attachments)
+    if problem:
+        flash(f"The bug report was not sent. {problem}")
+        return back
+
+    facts = {"Page": return_to, "Browser": request.headers.get("User-Agent", "unknown")[:200]}
+
+    try:
+        bug_id = bug_reports.send(session.get("email"), subject, description, attachments, facts)
+    except Exception as e:
+        logging.error(f"A bug report could not be emailed. Error: {e}")
+        flash("Sorry, the bug report could not be sent. Please email it to hello@accessibilityenhancer.com instead.")
+        return back
+
+    recent_bug_reports[owner] = recent + [time.time()]
+    flash(f"Thanks, your bug report was sent. Its reference is {bug_id}.")
+    return back
 
 
 # --- sign-in (required when Cognito is on; see auth.py) ---

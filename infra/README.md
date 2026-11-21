@@ -242,6 +242,28 @@ To tear an environment down, turn it off in the console first.
 To rotate the secret, run `put-parameter` again with `--overwrite` and re-run the
 deploy.
 
+### "Report a bug"
+
+The form in the site's header emails each report, with its attachments, to
+`bug_report_to` (hello@accessibilityenhancer.com by default) through SES. It also
+opens a public GitHub issue labelled `bug` that holds only the report's id, date,
+page, browser and attachment types, never what the person wrote or uploaded.
+
+1. Emails start once `email_domain_verified = true`, the same switch as the
+   sign-in emails. hello@ is on that domain, so this works in the SES sandbox too.
+   Make sure hello@ actually receives mail (Cloudflare Email Routing, for example).
+2. For the issues, create a fine-grained GitHub token limited to this repository
+   with only **Issues: read and write**, then:
+
+   ```bash
+   aws ssm put-parameter --name /aae/dev/github-issues-token \
+     --type SecureString --value '<token>'
+   ```
+
+   Until it exists, reports are still emailed and the missing issue is logged.
+   Create the `needs-triage` label once (`bug` already exists):
+   `gh label create needs-triage --description "Bug report from the app, not summarized yet"`.
+
 ### Where secrets live
 
 Nothing secret goes in the `TFVARS` secret or in the repository. The session key

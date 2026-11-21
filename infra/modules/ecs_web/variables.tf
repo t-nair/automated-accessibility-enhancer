@@ -118,3 +118,16 @@ variable "cognito" {
   })
   default = null
 }
+
+variable "bug_reports" {
+  description = "Where the \"Report a bug\" form sends reports (see bug_reports.py). Leave null to only log them."
+  type = object({
+    send_to                     = string
+    send_from                   = string
+    ses_identity_arn            = string
+    github_repository           = string
+    github_token_parameter_name = string
+    github_token_parameter_arn  = string
+  })
+  default = null
+}
