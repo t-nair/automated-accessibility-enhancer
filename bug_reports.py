@@ -1,6 +1,6 @@
 """Bug reports from the "Report a bug" form.
 
-Each report gets an id like BUG-20261120-7f3a and goes two places:
+Each report gets an id like BUG-20261120-7f3a9c and goes two places:
 
 - an email to the team (BUG_REPORT_TO) with everything: who sent it, what they
   wrote and their attachments. The reporter is the Reply-To, so answering it
@@ -41,7 +41,7 @@ _github_token = None
 
 
 def new_bug_id():
-    return f"BUG-{datetime.now(timezone.utc):%Y%m%d}-{secrets.token_hex(2)}"
+    return f"BUG-{datetime.now(timezone.utc):%Y%m%d}-{secrets.token_hex(3)}"
 
 
 # read once, on the first report, like the Cognito client secret in auth.py
