@@ -6,16 +6,52 @@
             <ul>
                 <li><a href="{{ url_for('home') }}">Submit a File</a></li>
                 <li><a href="{{ url_for('status') }}">Check Status</a></li>
+                <li class="account">
+                    <button type="button" class="link-button" id="report-bug-button" aria-haspopup="dialog">Report a bug</button>
                 {% if signed_in_email %}
-                    <li class="account">
                         <span>Signed in as {{ signed_in_email }}</span>
                         <form action="{{ url_for('sign_out') }}" method="POST" class="sign-out-form">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="link-button">Sign out</button>
                         </form>
-                    </li>
                 {% endif %}
+                </li>
             </ul>
         </nav>
         {% endif %}
     </header>
+
+    {% if signed_in_email or not sign_in_available %}
+    <dialog id="report-bug-dialog" class="report-bug" aria-labelledby="report-bug-heading">
+        <form action="{{ url_for('report_bug') }}" method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="return_to" value="{{ request.path }}">
+
+            <h2 id="report-bug-heading">Report a bug</h2>
+            <p class="help-text">
+                {% if signed_in_email %}We'll reply to {{ signed_in_email }}.{% endif %}
+                What you write and attach goes only to our team, never anywhere public.
+            </p>
+
+            <label for="bug-subject">Summary</label>
+            <input type="text" id="bug-subject" name="subject" required maxlength="150"
+                   aria-describedby="bug-subject-help">
+            <p class="help-text" id="bug-subject-help">One line, for example "Upload stuck at 0% for a PDF".</p>
+
+            <label for="bug-description">Details (optional)</label>
+            <textarea id="bug-description" name="description" rows="6" maxlength="5000"
+                      aria-describedby="bug-description-help"></textarea>
+            <p class="help-text" id="bug-description-help">What you did, what you expected and what happened instead.</p>
+
+            <label for="bug-attachments">Attachments (optional, up to 3)</label>
+            <input type="file" id="bug-attachments" name="attachments" multiple
+                   accept=".png,.jpg,.jpeg,.gif,.webp,.pptx,.ppt,.pdf" aria-describedby="bug-attachments-help">
+            <p class="help-text" id="bug-attachments-help">Screenshots, and the file that went wrong if you can share it. Up to 25 MB in total.</p>
+
+            <div class="report-bug-actions">
+                <button type="submit">Send report</button>
+                <button type="button" class="secondary" id="report-bug-cancel">Cancel</button>
+            </div>
+        </form>
+    </dialog>
+    {% endif %}

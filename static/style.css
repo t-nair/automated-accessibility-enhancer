@@ -825,3 +825,54 @@ nav .account {
 .review-approve label {
     margin-top: 0;
 }
+
+/* --- "Report a bug" dialog --- */
+
+.report-bug {
+    width: min(520px, calc(100% - 40px));
+    border: 2px solid #1c3d5a;
+    padding: 20px 24px;
+}
+
+.report-bug::backdrop {
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.report-bug h2 {
+    margin-top: 0;
+}
+
+.report-bug input[type="text"],
+.report-bug textarea {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px;
+    font: inherit;
+    border: 1px solid #555;
+}
+
+.report-bug input:focus,
+.report-bug textarea:focus {
+    outline: 3px solid #ffbf47;
+    outline-offset: 1px;
+}
+
+.report-bug .help-text {
+    margin-bottom: 15px;
+}
+
+.report-bug-actions {
+    display: flex;
+    gap: 12px;
+}
+
+.report-bug-actions .secondary {
+    background-color: white;
+    color: #1c3d5a;
+    border: 2px solid #1c3d5a;
+}
+
+.report-bug-actions .secondary:hover {
+    background-color: #eef3f8;
+}
