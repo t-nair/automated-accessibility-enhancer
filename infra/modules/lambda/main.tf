@@ -20,6 +20,12 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 locals {
+  # The model is called through a cross-region inference profile ("us." + model
+  # id). Bedrock checks the profile itself and the model in each region the
+  # profile can route the request to, so both need granting.
+  inference_profile_arn = "arn:aws:bedrock:${var.bedrock_region}:${data.aws_caller_identity.current.account_id}:inference-profile/${var.bedrock_model_id}"
+  foundation_model_arn  = "arn:aws:bedrock:*::foundation-model/${replace(var.bedrock_model_id, "/^[a-z]+[.]/", "")}"
+
   log_group_arn = "arn:aws:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.function_name}"
 }
 
@@ -85,18 +91,34 @@ data "aws_iam_policy_document" "this" {
     resources = [var.submissions_table_arn]
   }
 
-  # Captioning goes through the Messages API endpoint on Bedrock
-  # (bedrock-mantle), whose inference call authorizes
-  # bedrock-mantle:CreateInference. That is a different action from
-  # bedrock:InvokeModel, which belongs to the older InvokeModel and Converse
-  # APIs and will not authorize this.
+  # Image descriptions go through the ordinary Bedrock endpoint (InvokeModel),
+  # which this account is entitled to, not the newer Messages API endpoint
+  # (bedrock-mantle), which it is not. Granting bedrock-mantle:CreateInference
+  # alone left every call denied and every picture with placeholder alt text.
   statement {
     sid    = "DescribeImagesWithClaude"
     effect = "Allow"
 
-    actions = ["bedrock-mantle:CreateInference"]
+    actions = ["bedrock:InvokeModel"]
 
-    resources = var.bedrock_model_arns
+    resources = [local.inference_profile_arn]
+  }
+
+  # the model itself, in whichever US region the profile sends the request to,
+  # but only when the call comes through this profile
+  statement {
+    sid    = "DescribeImagesWithClaudeModel"
+    effect = "Allow"
+
+    actions = ["bedrock:InvokeModel"]
+
+    resources = [local.foundation_model_arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "bedrock:InferenceProfileArn"
+      values   = [local.inference_profile_arn]
+    }
   }
 }
 
@@ -138,8 +160,8 @@ resource "aws_lambda_function" "this" {
       BEDROCK_MODEL_ID  = var.bedrock_model_id
 
       # AWS_REGION is reserved and set by Lambda itself, so the Bedrock region
-      # is its own variable. It matters because bedrock-mantle is served in a
-      # subset of regions, which need not include the one the function runs in.
+      # is its own variable. It is where the inference profile lives, which
+      # need not be the region the function runs in.
       BEDROCK_REGION = var.bedrock_region
 
       LOG_LEVEL = var.log_level

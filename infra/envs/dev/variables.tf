@@ -66,13 +66,13 @@ variable "buckets_force_destroy" {
 # --- captioning ---
 
 variable "bedrock_model_id" {
-  description = "Claude model used for captioning. Model IDs on Bedrock carry an anthropic. prefix."
+  description = "Claude model that writes image descriptions: a Bedrock inference profile id, with \"us.\" in front and a version on the end. Haiku 4.5 is what production runs; Opus 5 costs about eight times as much per picture (see docs/cost-report.docx)."
   type        = string
-  default     = "anthropic.claude-opus-5"
+  default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
 variable "bedrock_region" {
-  description = "Region Bedrock requests go to. Has to serve the bedrock-mantle endpoint, which us-east-1 does and us-west-2 and us-east-2 do not."
+  description = "Region Bedrock requests go to, where the inference profile lives. us-east-1 is where image descriptions were proven to work; us-west-2 and us-east-2 answer that the model does not exist."
   type        = string
   default     = "us-east-1"
 }
