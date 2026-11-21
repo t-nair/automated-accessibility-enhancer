@@ -94,11 +94,13 @@
   <text x="606" y="835.0" class="detail">on merge to main · OIDC, no stored keys</text>
 
   <rect x="540" y="630" width="210" height="60" rx="12" class="box" stroke="#cbd5e1"/>
-  <text x="556" y="656" class="name">Amazon SES</text>
-  <text x="556" y="674" class="detail">bug reports → hello@ inbox</text>
+  <image href="data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyB3aWR0aD0iNjRweCIgaGVpZ2h0PSI2NHB4IiB2aWV3Qm94PSIwIDAgNjQgNjQiIHZlcnNpb249IjEuMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICAgIDx0aXRsZT5BbWF6b24gU2ltcGxlIEVtYWlsIFNlcnZpY2UgKGRyYXduIHRvIG1hdGNoIHRoZSBBV1MgNDhweCBhcmNoaXRlY3R1cmUgaWNvbnMpPC90aXRsZT4KICAgIDxnIHN0cm9rZT0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIxIiBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPgogICAgICAgIDxyZWN0IGZpbGw9IiNERDM0NEMiIHg9IjAiIHk9IjAiIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCI+PC9yZWN0PgogICAgICAgIDxnIHN0cm9rZT0iI0ZGRkZGRiIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBzdHJva2UtbGluZWNhcD0icm91bmQiPgogICAgICAgICAgICA8cmVjdCB4PSIxMyIgeT0iMTkiIHdpZHRoPSIzOCIgaGVpZ2h0PSIyNiIgcng9IjEiPjwvcmVjdD4KICAgICAgICAgICAgPHBvbHlsaW5lIHBvaW50cz0iMTMsMjAgMzIsMzUgNTEsMjAiPjwvcG9seWxpbmU+CiAgICAgICAgICAgIDxsaW5lIHgxPSIxMyIgeTE9IjQ0IiB4Mj0iMjYiIHkyPSIzMSI+PC9saW5lPgogICAgICAgICAgICA8bGluZSB4MT0iNTEiIHkxPSI0NCIgeDI9IjM4IiB5Mj0iMzEiPjwvbGluZT4KICAgICAgICA8L2c+CiAgICA8L2c+Cjwvc3ZnPg==" x="554" y="640.0" width="40" height="40"/>
+  <text x="606" y="656.0" class="name">Amazon SES</text>
+  <text x="606" y="674.0" class="detail">bug reports → hello@</text>
   <rect x="255" y="640" width="200" height="62" rx="12" class="box" stroke="#cbd5e1"/>
-  <text x="271" y="667" class="name">GitHub Issues</text>
-  <text x="271" y="685" class="detail">public · labelled bug</text>
+  <image href="data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjMTgxNzE3IiByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+R2l0SHViPC90aXRsZT48cGF0aCBkPSJNMTIgLjI5N2MtNi42MyAwLTEyIDUuMzczLTEyIDEyIDAgNS4zMDMgMy40MzggOS44IDguMjA1IDExLjM4NS42LjExMy44Mi0uMjU4LjgyLS41NzcgMC0uMjg1LS4wMS0xLjA0LS4wMTUtMi4wNC0zLjMzOC43MjQtNC4wNDItMS42MS00LjA0Mi0xLjYxQzQuNDIyIDE4LjA3IDMuNjMzIDE3LjcgMy42MzMgMTcuN2MtMS4wODctLjc0NC4wODQtLjcyOS4wODQtLjcyOSAxLjIwNS4wODQgMS44MzggMS4yMzYgMS44MzggMS4yMzYgMS4wNyAxLjgzNSAyLjgwOSAxLjMwNSAzLjQ5NS45OTguMTA4LS43NzYuNDE3LTEuMzA1Ljc2LTEuNjA1LTIuNjY1LS4zLTUuNDY2LTEuMzMyLTUuNDY2LTUuOTMgMC0xLjMxLjQ2NS0yLjM4IDEuMjM1LTMuMjItLjEzNS0uMzAzLS41NC0xLjUyMy4xMDUtMy4xNzYgMCAwIDEuMDA1LS4zMjIgMy4zIDEuMjMuOTYtLjI2NyAxLjk4LS4zOTkgMy0uNDA1IDEuMDIuMDA2IDIuMDQuMTM4IDMgLjQwNSAyLjI4LTEuNTUyIDMuMjg1LTEuMjMgMy4yODUtMS4yMy42NDUgMS42NTMuMjQgMi44NzMuMTIgMy4xNzYuNzY1Ljg0IDEuMjMgMS45MSAxLjIzIDMuMjIgMCA0LjYxLTIuODA1IDUuNjI1LTUuNDc1IDUuOTIuNDIuMzYuODEgMS4wOTYuODEgMi4yMiAwIDEuNjA2LS4wMTUgMi44OTYtLjAxNSAzLjI4NiAwIC4zMTUuMjEuNjkuODI1LjU3QzIwLjU2NSAyMi4wOTIgMjQgMTcuNTkyIDI0IDEyLjI5N2MwLTYuNjI3LTUuMzczLTEyLTEyLTEyIi8+PC9zdmc+" x="269" y="651.0" width="40" height="40"/>
+  <text x="321" y="667.0" class="name">GitHub Issues</text>
+  <text x="321" y="685.0" class="detail">public · labelled bug</text>
 
   <path class="flow" d="M200,318 C225,305 235,297 253,295"/>
   <path class="flow" d="M200,365 C225,382 235,402 253,410"/>
