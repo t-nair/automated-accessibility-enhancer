@@ -113,3 +113,26 @@ def test_reporters_from_over_an_hour_ago_are_forgotten(client, sent):
 def app_module_owner(client):
     with client.session_transaction() as browser_session:
         return browser_session["owner_id"]
+
+
+def test_an_attachment_that_cannot_be_read_gives_the_slot_back(client, sent, monkeypatch):
+    from werkzeug.datastructures import FileStorage
+
+    # the test client reads the file too while building the request, so only fail once the app has a slot
+    real_take = app_module.take_bug_report_slot
+    taken = []
+    monkeypatch.setattr(app_module, "take_bug_report_slot", lambda owner: taken.append(1) or real_take(owner))
+    real_read = FileStorage.__getattr__
+
+    def read(self, *args):
+        if taken:
+            raise OSError("disk error")
+        return real_read(self, "read")(*args)
+
+    monkeypatch.setattr(FileStorage, "read", read, raising=False)
+    report(client, files=[("shot.png", b"png")])
+
+    assert sent["emails"] == []
+    assert app_module.recent_bug_reports.get(app_module_owner(client), []) == []
+    with client.session_transaction() as browser_session:
+        assert "hello@accessibilityenhancer.com" in str(browser_session["_flashes"])

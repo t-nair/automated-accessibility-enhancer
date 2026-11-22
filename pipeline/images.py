@@ -30,6 +30,8 @@ FUNCTIONAL_TERMS = re.compile(
     re.IGNORECASE,
 )
 CAPTION_RE = re.compile(r"^(figure|fig\.?|image|chart|graph|diagram|map|photo|table)\b", re.IGNORECASE)
+# the longest side of a page preview for the review page, in pixels
+PAGE_PREVIEW_PIXELS = 1000
 NUMBER_RE = re.compile(r"(?<![\w.])-?\d+(?:[.,]\d+)*(?:%|\b)")
 
 
@@ -56,7 +58,7 @@ class ImageRemediation:
     reviewer_notes: str = ""
     approved: bool = False
     needs_review: bool = True
-    # the page's size in PDF points, so a reviewer's view can place `bounds` on page-<n>.png
+    # the page's size in PDF points, so a reviewer's view can place `bounds` on page-<n>.jpg
     page_width: float = 0.0
     page_height: float = 0.0
     image_data: str = field(default="", repr=False)
@@ -266,8 +268,13 @@ def analyze_digital_images(
                     rendered = bitmap.to_pil().convert("RGB")
                 finally:
                     bitmap.close()
-            # the whole page, for a reviewer to see each image where it sits
-            rendered.save(image_directory / f"page-{page_number}.png", "PNG")
+            # the whole page, for a reviewer to see each image where it sits. Only a
+            # person looks at it, so a small JPEG will do: about 100-150 KB a page
+            # rather than 1-5 MB as a full PNG, which keeps a long PDF inside Lambda's /tmp.
+            preview = rendered.copy()
+            preview.thumbnail((PAGE_PREVIEW_PIXELS, PAGE_PREVIEW_PIXELS))
+            preview.save(image_directory / f"page-{page_number}.jpg", "JPEG", quality=80)
+            preview.close()
             seen: set[tuple[int, int, int, int]] = set()
             for image_number, image in enumerate(page.images, start=1):
                 bounds = _clip_bounds(image, width, height)
@@ -296,11 +303,21 @@ def analyze_digital_images(
                 alt_text, long_description, evidence = _draft(
                     page_number, classification, detected_type, caption, nearby_text, extracted_text
                 )
+                # a drafted description stands in for a person's approval, the way a
+                # PowerPoint caption does, and is flagged in the report for checking.
+                # Every other check below still applies to it.
+                approved = False
                 if alt_provider is not None:
-                    provider_draft = alt_provider.draft(str(image_path), caption, nearby_text)
-                    classification = provider_draft.classification
-                    alt_text = provider_draft.text
-                    evidence.extend(provider_draft.evidence)
+                    try:
+                        provider_draft = alt_provider.draft(str(image_path), caption, nearby_text)
+                    except Exception as error:
+                        evidence.append(f"Could not be described automatically ({error}); a person has to write it.")
+                    else:
+                        classification = provider_draft.classification
+                        alt_text = provider_draft.text
+                        long_description = provider_draft.long_description
+                        evidence.extend(provider_draft.evidence)
+                        approved = not provider_draft.needs_review
                 items.append(
                     ImageRemediation(
                         id=image_id,
@@ -319,6 +336,7 @@ def analyze_digital_images(
                         long_description=long_description,
                         accessible_data_table=None,
                         evidence=evidence,
+                        approved=approved,
                         page_width=width,
                         page_height=height,
                         image_data=base64.b64encode(image_path.read_bytes()).decode("ascii"),

@@ -292,7 +292,7 @@ def test_a_pdf_review_is_read_saved_and_cleared(aws):
     review = {"images": [{"id": "p2-i1", "page_number": 2}], "issues": [], "approved": False}
     aws.put_object(Bucket=PROCESSED, Key="abc12345_Notes_pdf/abc12345_Notes.image-review.json", Body=json.dumps(review))
 
-    for name in ("page-2.png", "p2-i1.png"):
+    for name in ("page-2.jpg", "p2-i1.png"):
         aws.put_object(Bucket=PROCESSED, Key="abc12345_Notes_pdf/abc12345_Notes.images/" + name, Body=b"png")
 
     assert storage_aws.read_image_review(a_pdf_submission()) == review

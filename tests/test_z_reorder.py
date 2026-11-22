@@ -1661,3 +1661,26 @@ def test_the_reading_level_is_measured_on_enough_words():
 def test_a_few_words_are_not_given_a_reading_level():
     # slides are full of fragments, and a grade off three words would be noise
     assert z_reorder.measure_reading_level("Motors and generators") is None
+
+
+def test_pictures_in_placeholders_and_groups_are_described(folders, fake_captions):
+    input_folder, output_folder = folders
+    prs = Presentation()
+
+    # a picture inserted into a picture placeholder reports its type as PLACEHOLDER
+    slide = prs.slides.add_slide(prs.slide_layouts[8])
+    picture_placeholder = next(ph for ph in slide.placeholders if ph.placeholder_format.type == 18)
+    picture_placeholder.insert_picture(io.BytesIO(make_image_bytes()))
+
+    group = prs.slides.add_slide(prs.slide_layouts[6]).shapes.add_group_shape()
+    group.shapes.add_picture(io.BytesIO(make_image_bytes()), 0, 0, Inches(1), Inches(1))
+
+    prs.save(os.path.join(input_folder, "hidden_pictures.pptx"))
+    z_reorder.process_one_file("hidden_pictures.pptx", input_folder, output_folder)
+
+    updated = Presentation(os.path.join(output_folder, "hidden_pictures_updated.pptx"))
+    pictures = [shape for slide in updated.slides for shape in z_reorder.get_shapes(slide.shapes)
+                if z_reorder.is_picture(shape)]
+
+    assert len(pictures) == 2
+    assert [z_reorder.get_picture_alt_text(picture) for picture in pictures] == ["A test caption"] * 2

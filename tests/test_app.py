@@ -641,8 +641,8 @@ def test_a_pdf_goes_through_the_pdf_pipeline(client, monkeypatch):
     open(os.path.join(storage_module.UPLOAD_FOLDER, "pdf00001_Handout.pdf"), "wb").close()
     seen = []
 
-    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None, image_decisions=None):
-        seen.append((source.name, fallback_title, language))
+    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None, alt_provider=None, image_decisions=None):
+        seen.append((source.name, fallback_title, language, type(alt_provider).__name__))
         on_stage("inspect", "complete", "Inspected 1 pages.")
         return fake_manifest(fallback_title, language)
 
@@ -651,7 +651,7 @@ def test_a_pdf_goes_through_the_pdf_pipeline(client, monkeypatch):
     app_module.process_one_submission("pdf00001", "pdf00001_Handout.pdf")
 
     # the title comes from the name the person uploaded, not the id-prefixed saved name
-    assert seen == [("pdf00001_Handout.pdf", "Handout", "fr-FR")]
+    assert seen == [("pdf00001_Handout.pdf", "Handout", "fr-FR", "ClaudeAltTextProvider")]
     assert storage_module.get_submission("pdf00001")["status"] == "done"
 
     response = client.get("/details/pdf00001")
@@ -665,7 +665,7 @@ def test_a_pdf_waiting_on_image_approval_explains_why(client, monkeypatch):
     add_submission("pdf00002", status="queued", original_filename="Figures.pdf", saved_filename="pdf00002_Figures.pdf")
     open(os.path.join(storage_module.UPLOAD_FOLDER, "pdf00002_Figures.pdf"), "wb").close()
 
-    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None, image_decisions=None):
+    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None, alt_provider=None, image_decisions=None):
         output_dir.mkdir(parents=True)
         issues = ["p1-i1: Human approval is required.", "p1-i1: Replace the placeholder."]
         manifest = {"imageRemediation": {"issues": issues}}
@@ -868,7 +868,7 @@ def a_pdf_waiting_for_review(submission_id="pdf00009"):
     with open(os.path.join(folder, submission_id + "_Figures.image-review.json"), "w") as f:
         json.dump(review, f)
 
-    for name in ("page-1.png", "p1-i1.png"):
+    for name in ("page-1.jpg", "p1-i1.png"):
         with open(os.path.join(folder, submission_id + "_Figures.images", name), "wb") as f:
             f.write(b"png")
 
@@ -899,8 +899,8 @@ def test_the_details_page_links_to_the_review(client):
 def test_only_the_reviews_own_pictures_can_be_fetched(client):
     a_pdf_waiting_for_review()
 
-    assert client.get("/review/pdf00009/image/page-1.png").status_code == 200
-    assert client.get("/review/pdf00009/image/page-2.png").status_code == 404
+    assert client.get("/review/pdf00009/image/page-1.jpg").status_code == 200
+    assert client.get("/review/pdf00009/image/page-2.jpg").status_code == 404
     assert client.get("/review/pdf00009/image/..%2F..%2Fsecret_key.txt").status_code == 404
 
 
@@ -909,7 +909,7 @@ def test_a_finished_pdf_has_nothing_to_review(client):
     storage_module.update_submission("pdf00009", {"status": "done"})
 
     assert client.get("/review/pdf00009").status_code == 302
-    assert client.get("/review/pdf00009/image/page-1.png").status_code == 404
+    assert client.get("/review/pdf00009/image/page-1.jpg").status_code == 404
 
 
 def test_submitting_the_review_rebuilds_with_the_decisions(client, monkeypatch):
@@ -946,14 +946,15 @@ def test_submitting_the_review_rebuilds_with_the_decisions(client, monkeypatch):
     # and the next run hands that file to the pipeline
     seen = []
 
-    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None, image_decisions=None):
-        seen.append(image_decisions)
+    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None, alt_provider=None, image_decisions=None):
+        seen.append((image_decisions, alt_provider))
         raise RuntimeError("stop here")
 
     monkeypatch.setattr(pipeline.cli, "run", fake_run)
     app_module.process_one_submission("pdf00009", saved_name)
 
-    assert [str(path) for path in seen] == [decisions_path]
+    # the reviewer decided every image, so Claude is not asked to describe them again
+    assert [(str(path), provider) for path, provider in seen] == [(decisions_path, None)]
 
 
 def test_a_decorative_image_is_saved_with_empty_alt_text(client, monkeypatch):

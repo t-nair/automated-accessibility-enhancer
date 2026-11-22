@@ -193,16 +193,17 @@ variable "google_client_id" {
   default     = null
 }
 
+# Defaults rather than TFVARS: the domain is public, and the secret cannot be read back to add a line.
 variable "email_domain" {
-  description = "Domain to send sign-in emails from through SES. Leave null to use Cognito's own sender (about 50 a day)."
+  description = "Domain to send sign-in and bug-report emails from through SES. Set null to use Cognito's own sender (about 50 a day)."
   type        = string
-  default     = null
+  default     = "accessibilityenhancer.com"
 }
 
 variable "email_domain_verified" {
-  description = "Set true once SES shows email_domain as verified."
+  description = "Set true once SES shows email_domain as verified. Cognito refuses an unverified domain, so this cannot be true on the apply that creates it."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "bug_report_to" {

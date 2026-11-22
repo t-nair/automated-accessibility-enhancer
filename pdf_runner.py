@@ -8,8 +8,59 @@ import os
 import json
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 
-from z_reorder import severity_summary
+from z_reorder import SLIDE_CONTEXT_MAX_CHARS, ask_claude_about_image, prepare_image_for_caption, severity_summary
+
+
+# the same kind of description the PowerPoint captions ask for, plus a long one for
+# a chart or diagram, which a sentence or two cannot carry. JSON so the answer can
+# say "decorative" without that word ending up as somebody's alt text.
+PDF_IMAGE_PROMPT = (
+    "This image is from a PDF. Reply with JSON only, no other text, in the form "
+    '{"decorative": false, "alt_text": "...", "long_description": "..."}. '
+    "Set decorative to true, with empty strings for both descriptions, only for a border, divider, "
+    "background or other image that carries no information. "
+    "Otherwise alt_text is two or three short sentences saying what the image shows. "
+    "If it is a chart, graph, diagram, map, table or equation, long_description walks through it in full: "
+    "its kind, every label exactly as it is written, and how the parts are arranged or connected. "
+    "For anything else long_description is an empty string. "
+    "Only describe what is actually visible. Do not invent labels, numbers or values."
+)
+
+
+class ClaudeAltTextProvider:
+    """Describes a PDF's images with Claude on Bedrock, the way PowerPoint pictures are."""
+
+    def draft(self, image_path, caption, nearby_text):
+        from pipeline.providers import AltTextDraft
+
+        # prepare_image_for_caption wants what python-pptx hands it, a type and the bytes
+        picture = SimpleNamespace(content_type="image/png", blob=Path(image_path).read_bytes())
+        media_type, image_data = prepare_image_for_caption(picture)
+
+        prompt = PDF_IMAGE_PROMPT
+        context = " ".join(filter(None, [caption, nearby_text]))[:SLIDE_CONTEXT_MAX_CHARS]
+
+        if context:
+            prompt += (f' For context, the text around this image says: "{context}". Use that only to help '
+                       "you understand what you are looking at, and do not claim anything from it you cannot see.")
+
+        reply = ask_claude_about_image(media_type, image_data, prompt, Path(image_path).stem)
+        answer = json.loads(reply[reply.find("{"):reply.rfind("}") + 1])
+
+        if answer.get("decorative") is True:
+            return AltTextDraft("decorative", None, ["Claude judged this image decorative."], needs_review=False)
+
+        alt_text = str(answer.get("alt_text") or "").strip()
+        long_description = str(answer.get("long_description") or "").strip() or None
+
+        if not alt_text:
+            raise ValueError("Claude gave no alt text")
+
+        return AltTextDraft("complex" if long_description else "informative", alt_text,
+                            ["Description written by Claude; check it."], needs_review=False,
+                            long_description=long_description)
 
 
 # the PDF stages that count towards the progress bar, in the order they finish
@@ -43,7 +94,7 @@ def review_image_names(review):
 
     for image in review.get("images", []):
         names.add(image["id"] + ".png")
-        names.add(f"page-{image['page_number']}.png")
+        names.add(f"page-{image['page_number']}.jpg")
 
     return sorted(names)
 
@@ -95,6 +146,8 @@ def process_one_pdf(saved_name, input_folder, output_folder, report_folder, orig
             Path(input_folder) / saved_name, output_folder, on_stage,
             fallback_title=os.path.splitext(original_filename)[0], language=language,
             image_decisions=Path(image_decisions) if image_decisions else None,
+            # a re-run after review has a decision for every image, so Claude is not asked again
+            alt_provider=None if image_decisions else ClaudeAltTextProvider(),
         )
     except Exception as e:
         logging.exception(f"PDF remediation of {saved_name} stopped. Error: {e}")
@@ -121,8 +174,8 @@ def pdf_error_details(manifest_path, error):
         images_to_check = len({issue.split(":", 1)[0] for issue in image_issues})
 
         return False, f"{images_to_check} image(s) in this PDF need you to check their descriptions.", [
+            "Claude could not describe them, or a description mentions numbers we could not check against the image.",
             "Open the review to see each page, click an image to read its description, and fix or approve it.",
-            "Descriptions are never published until a person approves them.",
         ]
 
     # these messages come from the pipeline's own checks and say what stopped it.
@@ -174,6 +227,21 @@ def pdf_report_text(original_filename, manifest):
             line += " [moderate] (needs review)"
 
         lines.append(line)
+
+    descriptions = manifest.get("imageRemediation", {}).get("descriptions", [])
+
+    if descriptions:
+        lines.append("")
+        lines.append("Image descriptions, written by Claude. Check each one (WCAG 1.1.1):")
+
+        for image in descriptions:
+            if image["classification"] == "decorative":
+                lines.append(f"- Page {image['page']}, {image['id']}: decorative, so a screen reader skips it")
+            else:
+                lines.append(f"- Page {image['page']}, {image['id']}: {image['alt_text']}")
+
+                if image["long_description"]:
+                    lines.append(f"  Long description: {image['long_description']}")
 
     lines.append("")
     lines.append("Limits of this rebuild:")

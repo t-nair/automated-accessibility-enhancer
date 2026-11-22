@@ -13,6 +13,7 @@ from pypdf import PdfReader
 
 from .chrome_pdf import export_tagged_pdf
 from .images import analyze_digital_images, write_image_review
+from .providers import AltTextProvider
 from .inspect_pdf import _structure_inspection, inspect_pdf
 from .rebuild_html import build_semantic_html
 from .ocr import recognize_raster_pages
@@ -89,6 +90,7 @@ def run(
     image_decisions: Path | None = None,
     fallback_title: str | None = None,
     language: str | None = None,
+    alt_provider: AltTextProvider | None = None,
 ) -> dict[str, object]:
     output_dir.mkdir(parents=True, exist_ok=True)
     _report(on_stage, "inspect", "running", "Inspecting every page and its existing structure.")
@@ -121,7 +123,7 @@ def run(
             "The reconstruction may change visual pagination and formatting.",
             "Two-column reading order is inferred geometrically and still requires human review.",
             "OCR drafts require human review. Uncertain pages and unsupported tables or graphics remain blocked.",
-            "Image descriptions are drafts until explicitly approved; complex images require a long description or accessible data table.",
+            "Image descriptions are written by Claude when a provider is supplied and need checking; otherwise they are drafts until explicitly approved. Complex images require a long description or accessible data table.",
             "Tag verification checks structure connectivity and common roles; it is not a conformance certification.",
             "This workflow improves structure but does not claim PDF/UA or WCAG conformance.",
         ],
@@ -142,7 +144,7 @@ def run(
             stages.append({"name": "ocr", "status": "complete", "pages": list(ocr_pages), "needsReview": True})
         _report(on_stage, "image-remediation", "running", "Extracting image regions and building evidence-backed review records.")
         image_remediations, image_issues = analyze_digital_images(
-            source, inspection, image_directory, image_decisions
+            source, inspection, image_directory, image_decisions, alt_provider
         )
         if image_remediations:
             write_image_review(image_review_path, image_remediations, image_issues)
@@ -152,6 +154,11 @@ def run(
                 "images": sum(len(items) for items in image_remediations.values()),
                 "issues": image_issues,
                 "approved": not image_issues,
+                "descriptions": [
+                    {"id": item.id, "page": item.page_number, "classification": item.classification,
+                     "alt_text": item.alt_text, "long_description": item.long_description}
+                    for items in image_remediations.values() for item in items
+                ],
             }
             stages.append({
                 "name": "image-remediation",

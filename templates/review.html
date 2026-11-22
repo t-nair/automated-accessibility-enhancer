@@ -46,7 +46,7 @@
 
                         <div class="review-layout">
                             <div class="review-page">
-                                <img src="{{ url_for('review_image', submission_id=submission.id, image_name='page-' ~ page.number ~ '.png') }}"
+                                <img src="{{ url_for('review_image', submission_id=submission.id, image_name='page-' ~ page.number ~ '.jpg') }}"
                                      alt="Page {{ page.number }} of the PDF, with each image outlined">
 
                                 {% for image in page.images %}

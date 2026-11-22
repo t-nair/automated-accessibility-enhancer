@@ -16,6 +16,7 @@ import json
 import time
 import shutil
 import logging
+import mimetypes
 import urllib.parse
 
 import boto3
@@ -306,7 +307,9 @@ def upload_review(key, pdf_output):
 
         destination = folder + "/" + produced
         destination = destination if not prefix else prefix + "/" + destination
-        s3.upload_file(source, PROCESSED_BUCKET, destination)
+        # the browser fetches these straight from S3, so they need their real type
+        content_type = mimetypes.guess_type(produced)[0] or "application/octet-stream"
+        s3.upload_file(source, PROCESSED_BUCKET, destination, ExtraArgs={"ContentType": content_type})
 
     logging.info(f"Uploaded the image review for {key} ({len(to_upload)} files)")
 
