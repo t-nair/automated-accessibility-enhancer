@@ -291,11 +291,21 @@ def analyze_digital_images(
                 alt_text, long_description, evidence = _draft(
                     page_number, classification, detected_type, caption, nearby_text, extracted_text
                 )
+                # a drafted description stands in for a person's approval, the way a
+                # PowerPoint caption does, and is flagged in the report for checking.
+                # Every other check below still applies to it.
+                approved = False
                 if alt_provider is not None:
-                    provider_draft = alt_provider.draft(str(image_path), caption, nearby_text)
-                    classification = provider_draft.classification
-                    alt_text = provider_draft.text
-                    evidence.extend(provider_draft.evidence)
+                    try:
+                        provider_draft = alt_provider.draft(str(image_path), caption, nearby_text)
+                    except Exception as error:
+                        evidence.append(f"Could not be described automatically ({error}); a person has to write it.")
+                    else:
+                        classification = provider_draft.classification
+                        alt_text = provider_draft.text
+                        long_description = provider_draft.long_description
+                        evidence.extend(provider_draft.evidence)
+                        approved = not provider_draft.needs_review
                 items.append(
                     ImageRemediation(
                         id=image_id,
@@ -314,6 +324,7 @@ def analyze_digital_images(
                         long_description=long_description,
                         accessible_data_table=None,
                         evidence=evidence,
+                        approved=approved,
                         image_data=base64.b64encode(image_path.read_bytes()).decode("ascii"),
                     )
                 )

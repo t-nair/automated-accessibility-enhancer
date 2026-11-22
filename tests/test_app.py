@@ -641,8 +641,8 @@ def test_a_pdf_goes_through_the_pdf_pipeline(client, monkeypatch):
     open(os.path.join(storage_module.UPLOAD_FOLDER, "pdf00001_Handout.pdf"), "wb").close()
     seen = []
 
-    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None):
-        seen.append((source.name, fallback_title, language))
+    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None, alt_provider=None):
+        seen.append((source.name, fallback_title, language, type(alt_provider).__name__))
         on_stage("inspect", "complete", "Inspected 1 pages.")
         return fake_manifest(fallback_title, language)
 
@@ -651,7 +651,7 @@ def test_a_pdf_goes_through_the_pdf_pipeline(client, monkeypatch):
     app_module.process_one_submission("pdf00001", "pdf00001_Handout.pdf")
 
     # the title comes from the name the person uploaded, not the id-prefixed saved name
-    assert seen == [("pdf00001_Handout.pdf", "Handout", "fr-FR")]
+    assert seen == [("pdf00001_Handout.pdf", "Handout", "fr-FR", "ClaudeAltTextProvider")]
     assert storage_module.get_submission("pdf00001")["status"] == "done"
 
     response = client.get("/details/pdf00001")
@@ -665,7 +665,7 @@ def test_a_pdf_waiting_on_image_approval_explains_why(client, monkeypatch):
     add_submission("pdf00002", status="queued", original_filename="Figures.pdf", saved_filename="pdf00002_Figures.pdf")
     open(os.path.join(storage_module.UPLOAD_FOLDER, "pdf00002_Figures.pdf"), "wb").close()
 
-    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None):
+    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None, alt_provider=None):
         output_dir.mkdir(parents=True)
         manifest = {"imageRemediation": {"issues": ["Page 1 image 1 is not approved."]}}
         (output_dir / "pdf00002_Figures.remediation.json").write_text(json.dumps(manifest))
