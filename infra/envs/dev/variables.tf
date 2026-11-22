@@ -201,9 +201,9 @@ variable "email_domain" {
 }
 
 variable "email_domain_verified" {
-  description = "Set true once SES shows email_domain as verified."
+  description = "Set true once SES shows email_domain as verified. Cognito refuses an unverified domain, so this cannot be true on the apply that creates it."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "bug_report_to" {
