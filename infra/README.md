@@ -280,12 +280,16 @@ access to it like access to the secrets themselves.
 Cognito's own sender stops at about 50 emails a day. SES has no such limit, but
 takes two applies and a request to AWS:
 
-1. Set `email_domain = "accessibilityenhancer.com"` and apply. Add the three
-   records from `terraform output email_dkim_records` in Cloudflare as **CNAME,
-   DNS only** (not proxied).
-2. When the SES console shows the domain as verified, set
-   `email_domain_verified = true` and apply again. Verification and reset emails
-   now come from `no-reply@accessibilityenhancer.com`.
+1. `email_domain` defaults to `"accessibilityenhancer.com"` in
+   `envs/dev/variables.tf`, so the first apply creates the SES domain. Add the three
+   records from `terraform output email_dkim_records` (or the SES console, under the
+   domain's **DKIM** tab) in Cloudflare as **CNAME, DNS only** (not proxied).
+2. When the SES console shows the domain as verified, change the
+   `email_domain_verified` default to `true` in the same file and apply again.
+   Verification and reset emails now come from `no-reply@accessibilityenhancer.com`,
+   and "Report a bug" starts emailing hello@. These are defaults rather than
+   `TFVARS` lines because neither is secret and a GitHub secret cannot be read
+   back to add to it.
 3. A new SES account is in the **sandbox** and can only send to addresses it has
    verified. Request production access in the SES console, under **Account
    dashboard**, before real people sign up.
