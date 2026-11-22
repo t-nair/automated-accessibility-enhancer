@@ -46,7 +46,7 @@
                             <td>{{ submission.submitted_at }}</td>
                             <td>
                                 <span class="status-badge status-{{ submission.status }}">
-                                    {{ submission.status }}
+                                    {{ submission.status|replace("_", " ") }}
                                 </span>
                             </td>
                             <td>

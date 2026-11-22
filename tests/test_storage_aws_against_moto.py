@@ -283,3 +283,26 @@ def test_deleting_a_pdf_submission_clears_its_result_folder(aws):
 
     assert storage_aws.upload_exists("abc12345_Notes.pdf") is False
     assert aws.list_objects_v2(Bucket=PROCESSED).get("KeyCount") == 0
+
+
+def test_a_pdf_review_is_read_saved_and_cleared(aws):
+    import json
+
+    storage_aws.save_upload(io.BytesIO(b"pdf"), "abc12345_Notes.pdf")
+    review = {"images": [{"id": "p2-i1", "page_number": 2}], "issues": [], "approved": False}
+    aws.put_object(Bucket=PROCESSED, Key="abc12345_Notes_pdf/abc12345_Notes.image-review.json", Body=json.dumps(review))
+
+    for name in ("page-2.jpg", "p2-i1.png"):
+        aws.put_object(Bucket=PROCESSED, Key="abc12345_Notes_pdf/abc12345_Notes.images/" + name, Body=b"png")
+
+    assert storage_aws.read_image_review(a_pdf_submission()) == review
+
+    # the decisions go next to the PDF in the uploads bucket, where the Lambda reads them
+    storage_aws.save_image_decisions(a_pdf_submission(), {"images": []})
+    saved = aws.get_object(Bucket=UPLOADS, Key="abc12345_Notes.image-decisions.json")
+    assert json.loads(saved["Body"].read()) == {"images": []}
+
+    storage_aws.delete_submission_files(a_pdf_submission())
+
+    assert aws.list_objects_v2(Bucket=PROCESSED).get("KeyCount") == 0
+    assert aws.list_objects_v2(Bucket=UPLOADS).get("KeyCount") == 0

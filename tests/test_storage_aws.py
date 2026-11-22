@@ -287,12 +287,16 @@ def test_a_pdfs_results_are_sent_back_in_their_own_folder(monkeypatch, tmp_path)
 def test_a_pdf_upload_goes_to_the_pdf_pipeline(monkeypatch):
     calls = []
 
-    def fake_pdf(saved_name, input_folder, output_folder, report_folder, original_filename, progress, language):
-        calls.append((saved_name, original_filename, os.path.basename(output_folder)))
+    def fake_pdf(saved_name, input_folder, output_folder, report_folder, original_filename, progress, language,
+                 image_decisions=None):
+        calls.append((saved_name, original_filename, os.path.basename(output_folder), image_decisions))
         return True, None, None
 
     class FakeS3:
         def download_file(self, bucket, key, path):
+            # a first run: the website has saved no review decisions yet
+            if key.endswith(".image-decisions.json"):
+                raise Exception("AccessDenied")
             open(path, "w").close()
 
     monkeypatch.setattr(lambda_handler, "process_one_pdf", fake_pdf)
@@ -303,4 +307,53 @@ def test_a_pdf_upload_goes_to_the_pdf_pipeline(monkeypatch):
     monkeypatch.setattr(lambda_handler, "get_table", lambda: None)
 
     assert lambda_handler.process_one_object("uploads", "abc12345_Notes.pdf") == (True, None, None)
-    assert calls == [("abc12345_Notes.pdf", "Notes.pdf", "abc12345_Notes_pdf")]
+    assert calls == [("abc12345_Notes.pdf", "Notes.pdf", "abc12345_Notes_pdf", None)]
+
+
+def test_a_pdf_waiting_on_image_approval_sends_its_review_and_says_so(monkeypatch, tmp_path):
+    import json
+
+    uploaded = []
+    types = {}
+    outcomes = []
+
+    def fake_pdf(saved_name, input_folder, output_folder, report_folder, original_filename, progress, language,
+                 image_decisions=None):
+        # what pipeline/cli.py leaves behind when it stops for approval
+        images = os.path.join(output_folder, "abc12345_Notes.images")
+        os.makedirs(images)
+        for name in ("page-2.jpg", "p2-i1.png"):
+            open(os.path.join(images, name), "w").close()
+        review = {"images": [{"id": "p2-i1", "page_number": 2}], "issues": ["p2-i1: Human approval is required."],
+                  "approved": False}
+        with open(os.path.join(output_folder, "abc12345_Notes.image-review.json"), "w") as f:
+            json.dump(review, f)
+        # passed through from the decisions the website saved
+        assert image_decisions.endswith("abc12345_Notes.image-decisions.json")
+        return False, "1 image(s) in this PDF need you to check their descriptions.", ["Open the review."]
+
+    class FakeS3:
+        def download_file(self, bucket, key, path):
+            open(path, "w").close()
+
+        def upload_file(self, path, bucket, key, ExtraArgs=None):
+            uploaded.append(key)
+            types[key] = (ExtraArgs or {}).get("ContentType")
+
+    monkeypatch.setattr(lambda_handler, "WORK_ROOT", str(tmp_path / "work"))
+    monkeypatch.setattr(lambda_handler, "process_one_pdf", fake_pdf)
+    monkeypatch.setattr(lambda_handler, "s3", FakeS3())
+    monkeypatch.setattr(lambda_handler, "write_status", lambda *a: None)
+    monkeypatch.setattr(lambda_handler, "get_table", lambda: None)
+    monkeypatch.setattr(lambda_handler, "write_outcome", lambda *a: outcomes.append(a[-1]))
+
+    lambda_handler.process_one_object("uploads", "abc12345_Notes.pdf")
+
+    assert outcomes == ["needs_review"]
+    # exactly where storage_aws reads them from
+    expected = [storage_aws.review_key("abc12345_Notes.pdf")] + [
+        storage_aws.review_image_key("abc12345_Notes.pdf", name) for name in ("p2-i1.png", "page-2.jpg")]
+    assert sorted(uploaded) == sorted(expected)
+    assert storage_aws.review_key("abc12345_Notes.pdf") == "abc12345_Notes_pdf/abc12345_Notes.image-review.json"
+    assert types[storage_aws.review_image_key("abc12345_Notes.pdf", "page-2.jpg")] == "image/jpeg"
+    assert types[storage_aws.review_image_key("abc12345_Notes.pdf", "p2-i1.png")] == "image/png"

@@ -641,7 +641,7 @@ def test_a_pdf_goes_through_the_pdf_pipeline(client, monkeypatch):
     open(os.path.join(storage_module.UPLOAD_FOLDER, "pdf00001_Handout.pdf"), "wb").close()
     seen = []
 
-    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None, alt_provider=None):
+    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None, alt_provider=None, image_decisions=None):
         seen.append((source.name, fallback_title, language, type(alt_provider).__name__))
         on_stage("inspect", "complete", "Inspected 1 pages.")
         return fake_manifest(fallback_title, language)
@@ -665,18 +665,21 @@ def test_a_pdf_waiting_on_image_approval_explains_why(client, monkeypatch):
     add_submission("pdf00002", status="queued", original_filename="Figures.pdf", saved_filename="pdf00002_Figures.pdf")
     open(os.path.join(storage_module.UPLOAD_FOLDER, "pdf00002_Figures.pdf"), "wb").close()
 
-    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None, alt_provider=None):
+    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None, alt_provider=None, image_decisions=None):
         output_dir.mkdir(parents=True)
-        manifest = {"imageRemediation": {"issues": ["Page 1 image 1 is not approved."]}}
+        issues = ["p1-i1: Human approval is required.", "p1-i1: Replace the placeholder."]
+        manifest = {"imageRemediation": {"issues": issues}}
         (output_dir / "pdf00002_Figures.remediation.json").write_text(json.dumps(manifest))
+        (output_dir / "pdf00002_Figures.image-review.json").write_text(json.dumps(a_review(issues)))
         raise RuntimeError("Image remediation requires approval. Review C:/server/path.json")
 
     monkeypatch.setattr(pipeline.cli, "run", fake_run)
     app_module.process_one_submission("pdf00002", "pdf00002_Figures.pdf")
 
     submission = storage_module.get_submission("pdf00002")
-    assert submission["status"] == "error"
-    assert "need a person to approve" in submission["error_message"]
+    # waiting on a person is not an error, and it counts images rather than issues
+    assert submission["status"] == "needs_review"
+    assert submission["error_message"].startswith("1 image(s)")
     # the server's own paths are not shown to the person
     assert "server/path" not in submission["error_message"]
 
@@ -834,3 +837,132 @@ def test_the_progress_address_is_plain_without_a_prefix(client):
     page = client.get("/details/prog5678").get_data(as_text=True)
 
     assert 'data-progress-url="/progress/prog5678"' in page
+
+
+def a_review(issues=(), approved=False):
+    return {
+        "images": [{
+            "id": "p1-i1", "page_number": 1, "image_number": 1,
+            "bounds": {"x0": 61.2, "top": 79.2, "x1": 306.0, "bottom": 396.0},
+            "page_width": 612.0, "page_height": 792.0,
+            "classification": "informative", "caption": "Figure 1: Enrollment by year",
+            "extracted_text": [], "alt_text": "Informative image on page 1; description required.",
+            "long_description": None, "reviewer_verified_values": [], "reviewer_notes": "", "approved": approved,
+        }],
+        "issues": list(issues),
+        "approved": approved,
+    }
+
+
+def a_pdf_waiting_for_review(submission_id="pdf00009"):
+    import json
+
+    saved_name = submission_id + "_Figures.pdf"
+    add_submission(submission_id, status="needs_review", original_filename="Figures.pdf", saved_filename=saved_name)
+    open(os.path.join(storage_module.UPLOAD_FOLDER, saved_name), "wb").close()
+
+    folder = storage_module.pdf_output_folder(saved_name)
+    os.makedirs(os.path.join(folder, submission_id + "_Figures.images"))
+    review = a_review(["p1-i1: Human approval is required."])
+
+    with open(os.path.join(folder, submission_id + "_Figures.image-review.json"), "w") as f:
+        json.dump(review, f)
+
+    for name in ("page-1.jpg", "p1-i1.png"):
+        with open(os.path.join(folder, submission_id + "_Figures.images", name), "wb") as f:
+            f.write(b"png")
+
+    return saved_name
+
+
+def test_the_review_page_outlines_each_image_on_its_page(client):
+    a_pdf_waiting_for_review()
+
+    page = client.get("/review/pdf00009").data.decode()
+
+    assert "Page 1" in page
+    # 61.2 of a 612 point wide page is 10% in, 79.2 of 792 is 10% down
+    assert "left: 10.0%; top: 10.0%; width: 40.0%; height: 40.0%" in page
+    assert "Human approval is required." in page
+    assert "Figure 1: Enrollment by year" in page
+
+
+def test_the_details_page_links_to_the_review(client):
+    a_pdf_waiting_for_review()
+
+    page = client.get("/details/pdf00009").data.decode()
+
+    assert "needs review" in page
+    assert "/review/pdf00009" in page
+
+
+def test_only_the_reviews_own_pictures_can_be_fetched(client):
+    a_pdf_waiting_for_review()
+
+    assert client.get("/review/pdf00009/image/page-1.jpg").status_code == 200
+    assert client.get("/review/pdf00009/image/page-2.jpg").status_code == 404
+    assert client.get("/review/pdf00009/image/..%2F..%2Fsecret_key.txt").status_code == 404
+
+
+def test_a_finished_pdf_has_nothing_to_review(client):
+    a_pdf_waiting_for_review()
+    storage_module.update_submission("pdf00009", {"status": "done"})
+
+    assert client.get("/review/pdf00009").status_code == 302
+    assert client.get("/review/pdf00009/image/page-1.jpg").status_code == 404
+
+
+def test_submitting_the_review_rebuilds_with_the_decisions(client, monkeypatch):
+    import json
+    import pipeline.cli
+
+    saved_name = a_pdf_waiting_for_review()
+    queued = []
+    monkeypatch.setattr(app_module, "restart_processing", lambda submission_id, name: queued.append(name))
+
+    response = client.post("/review/pdf00009", data={
+        "p1-i1-classification": "complex",
+        "p1-i1-alt_text": "Bar chart of enrollment by year.",
+        "p1-i1-long_description": "Enrollment rises every year from 2019 to 2023.",
+        "p1-i1-verified_values": "2019, 2023",
+        "p1-i1-reviewer_notes": "Read off the axis.",
+        "p1-i1-approved": "yes",
+    })
+
+    assert response.status_code == 302
+    assert queued == [saved_name]
+    assert storage_module.get_submission("pdf00009")["status"] == "queued"
+
+    decisions_path = storage_module.image_decisions_path(saved_name)
+    with open(decisions_path) as f:
+        decision = json.load(f)["images"][0]
+
+    assert decision == {
+        "id": "p1-i1", "classification": "complex", "alt_text": "Bar chart of enrollment by year.",
+        "long_description": "Enrollment rises every year from 2019 to 2023.",
+        "reviewer_verified_values": ["2019", "2023"], "reviewer_notes": "Read off the axis.", "approved": True,
+    }
+
+    # and the next run hands that file to the pipeline
+    seen = []
+
+    def fake_run(source, output_dir, on_stage, fallback_title=None, language=None, alt_provider=None, image_decisions=None):
+        seen.append((image_decisions, alt_provider))
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(pipeline.cli, "run", fake_run)
+    app_module.process_one_submission("pdf00009", saved_name)
+
+    # the reviewer decided every image, so Claude is not asked to describe them again
+    assert [(str(path), provider) for path, provider in seen] == [(decisions_path, None)]
+
+
+def test_a_decorative_image_is_saved_with_empty_alt_text(client, monkeypatch):
+    a_pdf_waiting_for_review()
+    review = a_review()
+    form = {"p1-i1-classification": "decorative", "p1-i1-alt_text": "a line", "p1-i1-approved": "yes"}
+
+    decision = app_module.decisions_from_form(review, form)["images"][0]
+
+    assert decision["classification"] == "decorative"
+    assert decision["alt_text"] == ""

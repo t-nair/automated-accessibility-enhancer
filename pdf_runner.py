@@ -66,10 +66,60 @@ class ClaudeAltTextProvider:
 # the PDF stages that count towards the progress bar, in the order they finish
 PDF_STAGES = ("inspect", "image-remediation", "semantic-html", "tagged-pdf-export", "verify")
 
+# the status a submission gets when its images are waiting for a person to approve them
+NEEDS_REVIEW = "needs_review"
+
+
+def stem_of(saved_name):
+    return os.path.splitext(saved_name)[0]
+
+
+# these live in the PDF's output folder, named the way pipeline/cli.py names them
+def review_file_name(saved_name):
+    return stem_of(saved_name) + ".image-review.json"
+
+
+def images_folder_name(saved_name):
+    return stem_of(saved_name) + ".images"
+
+
+# a reviewer's decisions, in the format pipeline/images.py reads with --image-decisions
+def decisions_file_name(saved_name):
+    return stem_of(saved_name) + ".image-decisions.json"
+
+
+def review_image_names(review):
+    """The pictures a review needs: each cropped image and each page it is on."""
+    names = set()
+
+    for image in review.get("images", []):
+        names.add(image["id"] + ".png")
+        names.add(f"page-{image['page_number']}.jpg")
+
+    return sorted(names)
+
+
+def read_review(output_folder, saved_name):
+    path = Path(output_folder) / review_file_name(saved_name)
+
+    if not path.exists():
+        return None
+
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def review_is_pending(output_folder, saved_name):
+    """True when the last run stopped because images still need approving."""
+    review = read_review(output_folder, saved_name)
+
+    return review is not None and not review.get("approved")
+
 
 # the PDF version of process_one_file: gives back whether it worked, a message and steps to try
 # output_folder gets the rebuilt PDF and its files, report_folder the <stem>_alt_text report
-def process_one_pdf(saved_name, input_folder, output_folder, report_folder, original_filename, progress_callback, language=None):
+# image_decisions is a reviewer's decisions file from the review page, or None on a first run
+def process_one_pdf(saved_name, input_folder, output_folder, report_folder, original_filename, progress_callback,
+                    language=None, image_decisions=None):
     # imported here so a server without the PDF packages can still fix PowerPoint files
     try:
         from pipeline.cli import run as remediate_pdf
@@ -95,7 +145,9 @@ def process_one_pdf(saved_name, input_folder, output_folder, report_folder, orig
         manifest = remediate_pdf(
             Path(input_folder) / saved_name, output_folder, on_stage,
             fallback_title=os.path.splitext(original_filename)[0], language=language,
-            alt_provider=ClaudeAltTextProvider(),
+            image_decisions=Path(image_decisions) if image_decisions else None,
+            # a re-run after review has a decision for every image, so Claude is not asked again
+            alt_provider=None if image_decisions else ClaudeAltTextProvider(),
         )
     except Exception as e:
         logging.exception(f"PDF remediation of {saved_name} stopped. Error: {e}")
@@ -118,9 +170,12 @@ def pdf_error_details(manifest_path, error):
         image_issues = manifest.get("imageRemediation", {}).get("issues", [])
 
     if image_issues:
-        return False, f"This PDF has images whose descriptions need a person to approve them ({len(image_issues)} issue(s)).", [
-            "Claude could not describe some images, or a description mentions numbers that could not be checked against the image, and approving them is not on this website yet.",
-            "Ask the accessibility team to run the PDF command-line tool with an approved image review file.",
+        # each issue starts with the image's id, e.g. "p2-i1: Human approval is required."
+        images_to_check = len({issue.split(":", 1)[0] for issue in image_issues})
+
+        return False, f"{images_to_check} image(s) in this PDF need you to check their descriptions.", [
+            "Claude could not describe them, or a description mentions numbers we could not check against the image.",
+            "Open the review to see each page, click an image to read its description, and fix or approve it.",
         ]
 
     # these messages come from the pipeline's own checks and say what stopped it.
