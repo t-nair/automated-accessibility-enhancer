@@ -1,7 +1,8 @@
-"""Provider contracts for OCR and future alt-text stages.
+"""Provider contracts for OCR and alt-text drafting.
 
-The local OCR implementation returns line evidence and review state.
-Alternative-text drafting remains an unimplemented interface.
+The local OCR implementation returns line evidence and review state. Alt text
+is drafted by whoever calls the pipeline (pdf_runner.py asks Claude on Bedrock),
+so the pipeline itself never needs AWS.
 """
 
 from __future__ import annotations
@@ -51,6 +52,7 @@ class AltTextDraft:
     text: str | None
     evidence: list[str]
     needs_review: bool = True
+    long_description: str | None = None
 
 
 class OcrProvider(Protocol):

@@ -274,5 +274,55 @@ class ImageRemediationTests(unittest.TestCase):
             self.assertLess(output_html.index("This digital page"), output_html.index("Solid blue square"))
 
 
+    def _analyze_with(self, provider):
+        from pipeline.inspect_pdf import inspect_pdf
+        from pipeline.providers import ProviderUnavailable
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+            root = Path(directory)
+            source = root / "digital-image.pdf"
+            digital_image_fixture(source)
+            with patch("pipeline.images.RapidOcrProvider", side_effect=ProviderUnavailable("test")):
+                return analyze_digital_images(source, inspect_pdf(source), root / "images", alt_provider=provider)
+
+    def test_a_drafted_description_needs_no_separate_approval(self) -> None:
+        from pipeline.providers import AltTextDraft
+        provider = SimpleNamespace(draft=lambda *args: AltTextDraft(
+            "informative", "Solid blue square used as a sample image.", ["Written by a test."], needs_review=False))
+        images, issues = self._analyze_with(provider)
+        self.assertEqual(issues, [])
+        self.assertEqual(images[1][0].alt_text, "Solid blue square used as a sample image.")
+
+    def test_an_image_that_cannot_be_described_still_waits_for_a_person(self) -> None:
+        def fail(*args):
+            raise RuntimeError("Bedrock is down")
+        images, issues = self._analyze_with(SimpleNamespace(draft=fail))
+        self.assertTrue(any("Human approval" in issue for issue in issues))
+        self.assertTrue(any("Bedrock is down" in note for note in images[1][0].evidence))
+
+
+class ClaudeAltTextProviderTests(unittest.TestCase):
+    def _draft(self, reply):
+        import pdf_runner
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+            image_path = Path(directory) / "p1-i1.png"
+            from PIL import Image
+            Image.new("RGB", (8, 8), "blue").save(image_path)
+            with patch("pdf_runner.ask_claude_about_image", return_value=reply):
+                return pdf_runner.ClaudeAltTextProvider().draft(str(image_path), "Figure 1. Sales", "")
+
+    def test_a_chart_gets_a_long_description(self) -> None:
+        draft = self._draft('{"decorative": false, "alt_text": "Bar chart of sales.", "long_description": "Bars for 2023 and 2024."}')
+        self.assertEqual((draft.classification, draft.text, draft.needs_review), ("complex", "Bar chart of sales.", False))
+        self.assertEqual(draft.long_description, "Bars for 2023 and 2024.")
+
+    def test_a_decorative_image_gets_no_alt_text(self) -> None:
+        draft = self._draft('Here you go: {"decorative": true, "alt_text": "", "long_description": ""}')
+        self.assertEqual((draft.classification, draft.text), ("decorative", None))
+
+    def test_a_reply_that_is_not_json_is_an_error(self) -> None:
+        with self.assertRaises(ValueError):
+            self._draft("A blue square.")
+
+
 if __name__ == "__main__":
     unittest.main()

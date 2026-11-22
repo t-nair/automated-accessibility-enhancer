@@ -16,6 +16,7 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml.ns import qn
 from pptx.oxml.xmlchemy import OxmlElement
+from pptx.shapes.picture import Picture
 from PIL import Image
 from title_detection import guess_title, _ph_chain, DEFAULT_PT, FURNITURE_PH
 
@@ -309,7 +310,15 @@ def build_caption_prompt(slide_text):
 def generate_image_caption(shape, slide_text=""):
     logging.info(f"Captioning {shape.name} ({len(shape.image.blob) // 1024} KB).")
     media_type, image_data = prepare_image_for_caption(shape.image)
-    prompt = build_caption_prompt(slide_text)
+    return tidy_caption(ask_claude_about_image(media_type, image_data, build_caption_prompt(slide_text), shape.name))
+
+
+def ask_claude_about_image(media_type, image_data, prompt, label):
+    """Send one picture and a prompt to Claude on Bedrock and give back its text reply.
+
+    Shared by the PowerPoint captions and the PDF image descriptions. Raises
+    CaptionRefused for a refusal or an empty reply, so neither is mistaken for one.
+    """
     client = get_caption_client()
 
     start_time = time.perf_counter()
@@ -354,14 +363,14 @@ def generate_image_caption(shape, slide_text=""):
 
     if response.stop_reason == "max_tokens":
         logging.warning(
-            f"The description for {shape.name} hit the token limit and may be cut short.")
+            f"The description for {label} hit the token limit and may be cut short.")
 
     usage = response.usage
     logging.info(
         f"Caption generated in {seconds_taken:.2f} seconds "
         f"({usage.input_tokens} tokens in, {usage.output_tokens} out).")
 
-    return tidy_caption(caption)
+    return caption
 
 
 def accessibility_processor(directory, new_directory, move_originals=False):
@@ -665,7 +674,9 @@ def get_shape_type(shape):
 
 
 def is_picture(shape):
-    return get_shape_type(shape) == MSO_SHAPE_TYPE.PICTURE
+    # a picture dropped into a content or picture placeholder reports its type as
+    # PLACEHOLDER, not PICTURE, so check the class, which covers both
+    return isinstance(shape, Picture)
 
 
 def is_title(shape):
@@ -1322,7 +1333,7 @@ def looks_like_a_page_title(alt_text):
 def find_copied_descriptions(slide):
     found = []
 
-    for shape in slide.shapes:
+    for shape in get_shapes(slide.shapes):
         if not is_picture(shape):
             continue
 
@@ -1678,7 +1689,7 @@ def count_images_needing_captions(prs):
     total = 0
 
     for slide in prs.slides:
-        for shape in slide.shapes:
+        for shape in get_shapes(slide.shapes):
             if needs_caption(shape):
                 total += 1
 
@@ -1773,8 +1784,9 @@ def fix_titles_and_log_alt_text(prs, f, filename, progress_callback=None):
             visual_order_lines.append(f"Slide {slide_number}, Shape: {later} is above {earlier} but is read after it")
 
         # read the shapes back after reordering, so the report lists them in the
-        # order a screen reader will actually announce them
-        for shape in list(slide.shapes):
+        # order a screen reader will actually announce them. Groups are opened up,
+        # since a picture inside a group needs a description as much as any other
+        for shape in list(get_shapes(slide.shapes)):
             needed_caption = needs_caption(shape)
             alt_text_before = get_picture_alt_text(shape) if needed_caption else None
 
